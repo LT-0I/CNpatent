@@ -24,6 +24,7 @@ description: >
 3. 按 Phase 1→2 分阶段增量生成交底书正文，每阶段经 `humanizer` 去 AI 痕迹后展示，用户确认后再推进
 4. 用户全部确认后，加载内置模板写入 .docx 文件
 5. 自动静默触发 Phase 3，生成防幻觉 AI 附图提示词
+6. 如需修正附图（删除冗余图、重编号），执行 Phase 4
 
 ---
 
@@ -145,10 +146,12 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 ### Phase 2：具体实施方式
 
+- **"一简一繁"策略**：已有算法（SfM、基础NeRF等）1-2 句带过，创新算法充分展开（含逻辑链、公式、参数）。创新部分应占总篇幅 70% 以上。详见 [writing-rules.md](references/writing-rules.md) 的"一简一繁"章节
 - 工程操作手册风格，写"如何做"而非"为什么"
 - 每个步骤必须引用至少一张附图（"如图X所示，…"）
+- 创新步骤使用子步骤拆分 (a/b/c/d/e)，避免整段大块文本
 - 所有核心计算以纯文本 LaTeX 公式表达
-- 公式后紧跟每个变量的物理含义解释
+- 公式后紧跟每个变量的物理含义解释（创新公式的变量可做领域化"蒙皮"释义）
 - 给出具体参数值（如 N=128、K=20、λ=0.2）
 
 生成后执行**铁律 3 双重去 AI 痕迹处理**（内置规则 + `humanizer`）。
@@ -235,6 +238,57 @@ prompt_doc.save('[专利名称]_全套AI生图提示词.docx')
 ✅ 全套附图的防幻觉 AI 生图提示词已保存至 [专利名称]_全套AI生图提示词.docx。
 ```
 
+### Phase 4：附图修正（按需触发）
+
+当用户要求删除冗余附图、重编号或修正附图引用时，执行此阶段。
+
+**执行步骤**：
+
+1. **标记孤儿段落**：扫描全文，按内容和样式标记需要删除的段落（附图说明描述行、图题段落、关联空行）
+2. **全局图号替换**：使用两阶段占位符策略，避免链式替换冲突（详见 [docx-patterns.md](references/docx-patterns.md)）
+3. **删除孤儿段落**：按索引逆序删除标记的段落
+4. **验证**：重新加载保存的文件，检查附图说明连续性、正文引用一致性、图题完整性
+5. **更新提示词文档**：如果图号变化，同步更新 AI 生图提示词文档
+
+**关键技术要点**：
+- python-docx 中文本常被拆分到多个 Run，**必须使用段落级替换**（`para_replace`），不能在单个 Run 中搜索。详见 [docx-patterns.md](references/docx-patterns.md) 的 "Run Splitting Problem" 章节。
+- 图号替换必须处理所有变体："如图X所示"、"如图X和图Y所示"、"图X至图Y"、附图说明行、图题段落。
+- 多图引用（如"如图3和图4所示"）在其中一张图被删除后需简化（→"如图3所示"）。
+
+**输出文件**：`[前缀]_[专利名称]_专利技术交底书.docx`
+
+### DOCX 写入后验证（所有 Phase 通用）
+
+每次生成或修改 .docx 后，必须验证文档完整性：
+
+```python
+import re
+doc_check = Document(output_path)
+
+# 1. 检查附图说明连续性（图1~图N 无跳号）
+fig_nums_in_desc = []
+for p in doc_check.paragraphs:
+    m = re.match(r'图(\d+)为本发明', p.text)
+    if m:
+        fig_nums_in_desc.append(int(m.group(1)))
+assert fig_nums_in_desc == list(range(1, len(fig_nums_in_desc) + 1)), "附图编号不连续！"
+
+# 2. 检查正文引用不超出附图范围
+max_fig = max(fig_nums_in_desc) if fig_nums_in_desc else 0
+for p in doc_check.paragraphs:
+    for m in re.finditer(r'图(\d+)', p.text):
+        ref_num = int(m.group(1))
+        assert ref_num <= max_fig, f"引用了不存在的图{ref_num}！"
+
+# 3. 检查图题段落连续性
+fig_nums_in_captions = []
+for p in doc_check.paragraphs:
+    if p.style.name == '图题' and p.text.strip():
+        m = re.match(r'图(\d+)', p.text.strip())
+        if m:
+            fig_nums_in_captions.append(int(m.group(1)))
+```
+
 ---
 
 ## 专利技术交底书文档结构
@@ -257,7 +311,7 @@ prompt_doc.save('[专利名称]_全套AI生图提示词.docx')
 ## 参考规范
 
 - [去 AI 痕迹与专利语言规范](references/writing-rules.md)
-- [python-docx 代码模板](references/docx-patterns.md)
+- [python-docx 代码模板](references/docx-patterns.md)（含 Run 分裂修复、链式替换、段落删除等模式）
 - [权利要求书撰写指南](references/claims-guide.md)（仅供参考，交底书中不生成）
 
 ## 插图写入
@@ -270,4 +324,21 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 doc.add_picture('图1.png', width=Inches(5.0))
 doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+```
+
+## 平台注意事项
+
+### Windows 环境
+
+Windows 默认使用 ANSI 编码，Python 输出中文会乱码。执行脚本时必须加编码前缀：
+
+```bash
+PYTHONUTF8=1 python -X utf8 script.py
+```
+
+或在脚本开头添加：
+
+```python
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 ```

@@ -171,12 +171,120 @@ last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 ---
 
+## Post-Generation Modification Patterns
+
+### Run Splitting Problem (Critical)
+
+python-docx 中，Word 文件里的文本经常被拆分到多个 Run 中。例如 "图6" 可能被拆成 Run[0]="图"、Run[1]="6"。**直接在单个 Run 中搜索 "图6" 永远找不到。**
+
+**解决方案：段落级替换函数**
+
+```python
+def para_replace(paragraph, old, new):
+    """段落级替换：合并所有 run 文本 → 替换 → 重写到第一个 run，保留其格式"""
+    full_text = paragraph.text
+    if old not in full_text:
+        return False
+    new_text = full_text.replace(old, new)
+    runs = paragraph.runs
+    if not runs:
+        return False
+    runs[0].text = new_text
+    for run in runs[1:]:
+        run._element.getparent().remove(run._element)
+    return True
+```
+
+**注意**：此函数会将整段文本合并到第一个 Run，继承第一个 Run 的格式。如果段落中有多种格式（如部分加粗），需要更精细的处理。对于专利文档的正文段落，此方案已够用。
+
+### Chain Replacement with Placeholders
+
+图号重编号（如删除图4/图5后，图6→图4、图7→图5...图10→图8）存在链式冲突：先替换 图10→图8，再替换 图8→图6 会把已改好的 图8 再次替换。
+
+**解决方案：两阶段占位符**
+
+```python
+# Phase 1: 全部替换为唯一占位符
+PHASE1 = [
+    ('图10', '##R_F8##'),
+    ('图9',  '##R_F7##'),
+    ('图8',  '##R_F6##'),
+    ('图7',  '##R_F5##'),
+    ('图6',  '##R_F4##'),
+]
+# Phase 2: 占位符替换为最终值
+PHASE2 = [
+    ('##R_F8##', '图8'),
+    ('##R_F7##', '图7'),
+    ('##R_F6##', '图6'),
+    ('##R_F5##', '图5'),
+    ('##R_F4##', '图4'),
+]
+
+# 执行：两遍扫描所有段落
+for p in doc.paragraphs:
+    for old, new in PHASE1:
+        para_replace(p, old, new)
+for p in doc.paragraphs:
+    for old, new in PHASE2:
+        para_replace(p, old, new)
+```
+
+**注意**：Phase 1 列表中长字符串必须排在前面（"图10" 先于 "图1"），避免子串匹配冲突。
+
+### Paragraph Deletion
+
+删除段落必须**从后向前**按索引逆序删除，否则前面的删除会导致后续索引失效。
+
+```python
+paras_to_delete_idx = [44, 45, 134, 135]  # 要删除的段落索引
+
+for idx in sorted(paras_to_delete_idx, reverse=True):
+    el = doc.paragraphs[idx]._element
+    el.getparent().remove(el)
+```
+
+定位段落的常用策略：
+- **按内容匹配**：`if '某关键词' in p.text`
+- **按样式匹配**：`if p.style.name == '图题' and p.text.strip() == '图4'`
+- **按位置关系**：删除某段后，检查下一段是否为空行，一并删除
+
+### Post-Modification Verification
+
+修改 .docx 后，必须重新加载文件并验证：
+
+```python
+import re
+doc2 = Document(output_path)
+
+# 1. 验证附图说明连续性
+for p in doc2.paragraphs:
+    if '为本发明实施例' in p.text:
+        print(f"  附图: {p.text[:60]}")
+
+# 2. 验证正文图引用
+for p in doc2.paragraphs:
+    refs = re.findall(r'如图[\d至~]+所示', p.text)
+    if refs:
+        print(f"  引用: {refs}")
+
+# 3. 验证图题段落
+for p in doc2.paragraphs:
+    if p.style.name == '图题' and p.text.strip():
+        print(f"  图题: {p.text}")
+```
+
+---
+
 ## Common Issues & Fixes
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | Template style not found | Style name mismatch | Inspect template styles first |
-| Chinese text garbled | Encoding issue | Use `sys.stdout.reconfigure(encoding='utf-8')` |
+| Chinese text garbled | Encoding issue | Windows: `PYTHONUTF8=1 python -X utf8 script.py` |
 | Formula renders as box | OLE object expected | Write as plain LaTeX text string instead |
 | Headers/footers lost | Created new doc instead of loading template | Always use `Document('template.docx')` |
 | EBUSY error | File open in Word | Change output filename or close Word |
+| Run splitting: "图6" split as "图"+"6" | Word internal formatting runs | Use `para_replace` (paragraph-level), not run-level search |
+| Chain replacement collision | 图10→图8 then 图8→图6 | Two-phase placeholder strategy |
+| Paragraph index shift after deletion | Deleting changes subsequent indices | Always delete in reverse index order |
