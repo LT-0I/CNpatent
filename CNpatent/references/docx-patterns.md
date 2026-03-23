@@ -203,14 +203,62 @@ insert_before(sect2_para, doc, '背景技术', add_h1)
 insert_before(sect2_para, doc, '...', add_body)
 
 insert_before(sect2_para, doc, '发明内容', add_h1)
-insert_before(sect2_para, doc, '...', add_body)
+# ★ 发明内容标准结构（必须按此顺序插入）
+# ① 目的句
+insert_before(sect2_para, doc, '本发明的目的是提供一种XXX方法，以解决上述现有技术存在的问题。', add_body)
+# ② 引入句
+insert_before(sect2_para, doc, '为实现上述目的，本发明提供了一种XXX方法，包括：', add_body)
+# ③ 独立权利要求主要步骤（每步独立成段，不编号，分号结尾，末步句号）
+insert_before(sect2_para, doc, '步骤A技术描述；', add_body)
+insert_before(sect2_para, doc, '步骤B技术描述；', add_body)
+insert_before(sect2_para, doc, '步骤N技术描述。', add_body)  # 末步句号
+# ④ "可选的"从属特征展开（对每个需要细化的主步骤各写一组）
+insert_before(sect2_para, doc, '可选的，所述[步骤B关键词]，具体包括：', add_body)
+insert_before(sect2_para, doc, '细节子步骤1；', add_body)
+insert_before(sect2_para, doc, '细节子步骤2。', add_body)
+# ... 重复更多"可选的"组 ...
+# ⑤ 技术效果
+insert_before(sect2_para, doc, '本发明的技术效果为：', add_body)
+insert_before(sect2_para, doc, '本发明通过...；...；...。', add_body)
 
 insert_before(sect2_para, doc, '附图说明', add_h1)
+# ★ 附图说明通用法律声明（必须插入）
+insert_before(sect2_para, doc, '为了更清楚地说明本发明实施例或现有技术中的技术方案，下面将对实施例中所需要使用的附图作简单的介绍，显而易见地，下面描述中的附图仅仅是本发明的一些实施例，对于本领域普通技术人员来讲，在不付出创造性劳动的前提下，还可以根据这些附图获得其他的附图。', add_body)
+insert_before(sect2_para, doc, '构成本申请的一部分的附图用来提供对本申请的进一步理解，本申请的示意性实施例及其说明用于解释本申请，并不构成对本申请的不当限定。在附图中：', add_body)
+# 然后逐图描述
 insert_before(sect2_para, doc, '图1为...示意图。', add_body)
 
 insert_before(sect2_para, doc, '具体实施方式', add_h1)
-insert_before(sect2_para, doc, '...', add_body)
+# ★ 具体实施方式通用法律声明（必须插入，共5段）
+insert_before(sect2_para, doc, '现详细说明本发明的多种示例性实施方式，该详细说明不应认为是对本发明的限制，而应理解为是对本发明的某些方面、特性和实施方案的更详细的描述。', add_body)
+insert_before(sect2_para, doc, '应理解本发明中所述的术语仅仅是为描述特别的实施方式，并非用于限制本发明。另外，对于本发明中的数值范围，应理解为还具体公开了该范围的上限和下限之间的每个中间值。在任何陈述值或陈述范围内的中间值以及任何其他陈述值或在所述范围内的中间值之间的每个较小的范围也包括在本发明内。这些较小范围的上限和下限可独立地包括或排除在范围内。', add_body)
+insert_before(sect2_para, doc, '在不背离本发明的范围或精神的情况下，可对本发明说明书的具体实施方式做多种改进和变化，这对本领域技术人员而言是显而易见的。由本发明的说明书得到的其他实施方式对技术人员而言是显而易见的。本申请说明书和实施例仅是示例性的。', add_body)
+insert_before(sect2_para, doc, '关于本文中所使用的「包含」「包括」「具有」「含有」等等，均为开放性的用语，即意指包含但不限于。', add_body)
+insert_before(sect2_para, doc, '需要说明的是，在不冲突的情况下，本申请中的实施例及实施例中的特征可以相互组合。下面将参考附图并结合实施例来详细说明本申请。', add_body)
+
+# ★ 实施例概述段（法律声明之后、详细步骤之前）
+insert_before(sect2_para, doc, '实施例一', add_body)
+insert_before(sect2_para, doc, '如图1至图N所示，本实施例中提供了一种XXX方法，包括：步骤A简称、步骤B简称、...、以及步骤N简称。', add_body)
+# 可选：实施环境说明段（硬件平台、传感器参数等）
+# insert_before(sect2_para, doc, '在本实施例中，以...为应用场景。...', add_body)
+insert_before(sect2_para, doc, '本实施例的具体实施方案包括：', add_body)
+
+# ★ 详细步骤（主体内容）
+insert_before(sect2_para, doc, '（1）步骤标题', add_body)
+insert_before(sect2_para, doc, '步骤正文...如图X所示...', add_body)
 insert_before(sect2_para, doc, '$$E = U \\Sigma V^T$$', add_formula)
+# ... 更多步骤 ...
+
+# ★ 实施例技术效果段（详细步骤之后）
+insert_before(sect2_para, doc, '本实施例的技术效果为：', add_body)
+insert_before(sect2_para, doc, '能够XXX：本实施例通过...，...。', add_body)
+insert_before(sect2_para, doc, '能够YYY：本实施例通过...，...。', add_body)
+
+# ★ 实施例总结段
+insert_before(sect2_para, doc, '综上所述，本实施例通过...，解决了现有技术在...中存在的...问题。该方法在...的前提下，实现了...，为...提供了一种...的技术方案。', add_body)
+
+# ★ 结尾段（固定文本，必须逐字复制）
+insert_before(sect2_para, doc, '以上所述，仅为本申请较佳的具体实施方式，但本申请的保护范围并不局限于此，任何熟悉本技术领域的技术人员在本申请揭露的技术范围内，可轻易想到的变化或替换，都应涵盖在本申请的保护范围之内。因此，本申请的保护范围应该以权利要求的保护范围为准。', add_body)
 
 # ── 6. Section 3：说明书附图（在文档末尾追加）──
 for fig_num in range(1, 9):
