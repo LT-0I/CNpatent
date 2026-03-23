@@ -38,30 +38,75 @@ Common template styles to look for:
 - `Heading 1` or `标题 1` — section titles (技术领域, 背景技术, etc.)
 - `Normal` or `正文` — body text
 - `首行缩进` — body text with first-line indent
+- `个人标题` — patent name (发明名称) title style
 - `公式` or `MTDisplayEquation` — centered formula lines
+- `图题` — figure caption style
 - `List Paragraph` — list items (if any)
 
-### Step 2: Write Content with Style Mapping
+### 模板分节结构 (Critical)
+
+内置模板包含 **4 个 Section**，每个 Section 有独立的页眉和页脚。分节符嵌入在特定段落的 `pPr/sectPr` 中，**删除这些段落会破坏整个文档的页面结构**。
+
+```
+Section 0 (页眉: "说明书摘要")  → 段落[0]  ← 携带 sectPr，绝不能删除
+Section 1 (页眉: "摘要附图")    → 段落[1]  ← 携带 sectPr，绝不能删除
+Section 2 (页眉: "说明书")      → 段落[2]~[12]，其中[12]携带 sectPr
+Section 3 (页眉: "说明书附图")  → 段落[13]~[34]，图题占位符
+```
+
+**铁律**：段落[0]、[1]、[12] 携带分节符（sectPr），必须保留。清理模板内容时只能清空文本，不能删除这些段落。
+
+### Step 2: 定位分节边界段落
 
 ```python
-def add_section_title(doc, text):
-    """Add a section title using the template's Heading 1 style."""
+from docx.oxml.ns import qn
+
+def find_section_boundaries(doc):
+    """找到所有携带 sectPr 的段落索引，这些段落是分节边界，不能删除"""
+    boundaries = []
+    for i, p in enumerate(doc.paragraphs):
+        ppr = p._element.find(qn('w:pPr'))
+        if ppr is not None and ppr.find(qn('w:sectPr')) is not None:
+            boundaries.append(i)
+    return boundaries
+    # 内置模板返回: [0, 1, 12]
+    # Section 0 结束于 para[0]  → 说明书摘要
+    # Section 1 结束于 para[1]  → 摘要附图
+    # Section 2 结束于 para[12] → 说明书
+    # Section 3 结束于文档末尾   → 说明书附图
+```
+
+### Step 3: Style Helper Functions
+
+```python
+def add_title(doc, text):
+    """Add patent name using 个人标题 style."""
     para = doc.add_paragraph(text)
-    # Try to apply template's heading style
-    for style_name in ['Heading 1', '标题 1']:
+    for name in ['个人标题']:
         try:
-            para.style = doc.styles[style_name]
+            para.style = doc.styles[name]
             break
         except KeyError:
             continue
     return para
 
-def add_body_text(doc, text):
+def add_h1(doc, text):
+    """Add a section title using the template's Heading 1 style."""
+    para = doc.add_paragraph(text)
+    for name in ['Heading 1', '标题 1']:
+        try:
+            para.style = doc.styles[name]
+            break
+        except KeyError:
+            continue
+    return para
+
+def add_body(doc, text):
     """Add body text using the template's normal/indented style."""
     para = doc.add_paragraph(text)
-    for style_name in ['首行缩进', 'Normal', '正文']:
+    for name in ['首行缩进', 'Normal', '正文']:
         try:
-            para.style = doc.styles[style_name]
+            para.style = doc.styles[name]
             break
         except KeyError:
             continue
@@ -70,56 +115,109 @@ def add_body_text(doc, text):
 def add_formula(doc, latex_text):
     """Add a LaTeX formula line using the template's formula style."""
     para = doc.add_paragraph(latex_text)
-    for style_name in ['公式', 'MTDisplayEquation']:
+    for name in ['公式', 'MTDisplayEquation']:
         try:
-            para.style = doc.styles[style_name]
+            para.style = doc.styles[name]
             break
         except KeyError:
-            # Fallback: center-aligned Normal
             from docx.enum.text import WD_ALIGN_PARAGRAPH
             para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             break
     return para
+
+def add_fig_caption(doc, text):
+    """Add figure caption using 图题 style."""
+    para = doc.add_paragraph(text)
+    for name in ['图题']:
+        try:
+            para.style = doc.styles[name]
+            break
+        except KeyError:
+            continue
+    return para
 ```
 
-### Step 3: Assemble Full Document (技术交底书)
+### Step 4: 分节感知写入 (Section-Aware Writing)
+
+核心思路：在 Section 边界段落**之前**插入内容，利用 `_element.addprevious()` 实现精确定位。
 
 ```python
 import os
 from docx import Document
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from copy import deepcopy
 
-# Load template (skill built-in or user-provided)
 template_path = os.path.join(
     os.path.expanduser('~'),
     '.claude', 'skills', 'CNpatent', 'assets', '专利交底书模板.docx'
 )
 doc = Document(template_path)
+body = doc.element.body
 
-# --- 说明书 ---
-add_section_title(doc, '技术领域')
-add_body_text(doc, '本发明属于...技术领域，具体涉及一种...方法。')
+# ── 1. 定位分节边界 ──
+boundaries = find_section_boundaries(doc)  # [0, 1, 12]
+sect0_para = doc.paragraphs[boundaries[0]]  # Section 0 边界 (说明书摘要)
+sect1_para = doc.paragraphs[boundaries[1]]  # Section 1 边界 (摘要附图)
+sect2_para = doc.paragraphs[boundaries[2]]  # Section 2 边界 (说明书)
 
-add_section_title(doc, '背景技术')
-add_body_text(doc, '...')
+# ── 2. 清除模板占位内容（保留边界段落本身）──
+# 删除 Section 2 中的占位段落 (para[2]~[11])，保留 para[12]
+for i in range(11, 1, -1):  # 逆序删除 11→2
+    el = doc.paragraphs[i]._element
+    el.getparent().remove(el)
 
-add_section_title(doc, '发明内容')
-add_body_text(doc, '...')
+# 删除 Section 3 中的图题占位段落 (para[13]~[34])
+# 注意：删除 Section 2 占位后索引已变化，重新定位
+# 此时 boundaries 已失效，用 sect2_para 的位置来定位
+# 简单做法：删除 sect2_para 之后的所有段落
+while True:
+    last = doc.paragraphs[-1]
+    if last._element is sect2_para._element:
+        break
+    # 检查是否是最终 sectPr（文档末尾），不能删
+    if last._element.find(qn('w:pPr')) is not None:
+        ppr = last._element.find(qn('w:pPr'))
+        if ppr.find(qn('w:sectPr')) is not None:
+            break
+    last._element.getparent().remove(last._element)
 
-add_section_title(doc, '附图说明')
-add_body_text(doc, '图1为...示意图。')
+# ── 3. Section 0：说明书摘要（在 sect0_para 之前插入）──
+def insert_before(anchor, doc, text, style_func):
+    """在锚点段落前插入新段落"""
+    p = style_func(doc, text)
+    anchor._element.addprevious(p._element)
+    return p
 
-add_section_title(doc, '具体实施方式')
-add_body_text(doc, '...')
+insert_before(sect0_para, doc, '本发明公开了一种...方法。', add_body)
 
-# Formulas in 具体实施方式
-add_formula(doc, '$$E = U \\Sigma V^T$$')
-add_body_text(doc, '其中，$U$为正交矩阵，$\\Sigma$为奇异值矩阵。')
+# ── 4. Section 1：摘要附图 → 保持空白，不写入任何内容 ──
 
-# --- 说明书摘要 ---
-add_section_title(doc, '说明书摘要')
-add_body_text(doc, '本发明公开了一种...方法。')
+# ── 5. Section 2：说明书正文（在 sect2_para 之前插入）──
+insert_before(sect2_para, doc, '一种XXX方法', add_title)
 
-# Save as new file (NEVER overwrite the template!)
+insert_before(sect2_para, doc, '技术领域', add_h1)
+insert_before(sect2_para, doc, '本发明属于...', add_body)
+
+insert_before(sect2_para, doc, '背景技术', add_h1)
+insert_before(sect2_para, doc, '...', add_body)
+
+insert_before(sect2_para, doc, '发明内容', add_h1)
+insert_before(sect2_para, doc, '...', add_body)
+
+insert_before(sect2_para, doc, '附图说明', add_h1)
+insert_before(sect2_para, doc, '图1为...示意图。', add_body)
+
+insert_before(sect2_para, doc, '具体实施方式', add_h1)
+insert_before(sect2_para, doc, '...', add_body)
+insert_before(sect2_para, doc, '$$E = U \\Sigma V^T$$', add_formula)
+
+# ── 6. Section 3：说明书附图（在文档末尾追加）──
+for fig_num in range(1, 9):
+    add_fig_caption(doc, f'图{fig_num}')
+    add_fig_caption(doc, '')  # 空行（留给图片插入位置）
+
+# ── 7. 保存 ──
 doc.save('一种XXX方法_专利技术交底书.docx')
 ```
 

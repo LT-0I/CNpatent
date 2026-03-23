@@ -63,11 +63,13 @@ doc = Document(template_path)
 ```
 
 执行要求：
-- 先检查模板中可用的段落样式，再做样式映射（Heading 1 / Normal / 首行缩进 / 公式 等）
+- 先检查模板中可用的段落样式，再做样式映射（个人标题 / Heading 1 / Normal / 首行缩进 / 公式 / 图题 等）
 - **严禁修改**模板自带的页眉、页脚、页码、页面边距、字体设置
+- **严禁删除携带 `sectPr` 的分节边界段落**（段落[0]、[1]、[12]），否则会破坏文档的页面结构和页眉
+- 模板分 4 个 Section：说明书摘要(第1页) → 摘要附图(第2页，空白) → 说明书 → 说明书附图。内容必须写入对应 Section，详见 [docx-patterns.md](references/docx-patterns.md) 的分节感知写入章节
 - 始终另存为新文件 `[专利名称]_专利技术交底书.docx`，**不得覆盖模板**
 
-如果用户在工作目录下有自己的模板文件，优先使用用户提供的模板。
+如果用户在工作目录下有自己的模板文件，优先使用用户提供的模板（注意：用户模板的分节结构可能不同，需重新扫描 `find_section_boundaries()`）。
 
 ### 铁律 2：纯文本 LaTeX 公式
 
@@ -160,53 +162,16 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 ### DOCX 写入（全部确认后执行）
 
-```python
-import os
-from docx import Document
-from docx.enum.style import WD_STYLE_TYPE
+**必须使用分节感知写入**，严格遵守模板的 4-Section 结构。详见 [docx-patterns.md](references/docx-patterns.md) 的完整代码模板。
 
-# 1. 加载内置模板
-template_path = os.path.join(
-    os.path.expanduser('~'),
-    '.claude', 'skills', 'CNpatent', 'assets', '专利交底书模板.docx'
-)
-doc = Document(template_path)
-
-# 2. 检查可用样式
-available = [s.name for s in doc.styles if s.type == WD_STYLE_TYPE.PARAGRAPH]
-
-# 3. 样式映射写入
-def add_heading(doc, text):
-    p = doc.add_paragraph(text)
-    for name in ['Heading 1', '标题 1']:
-        if name in available:
-            p.style = doc.styles[name]
-            break
-    return p
-
-def add_body(doc, text):
-    p = doc.add_paragraph(text)
-    for name in ['首行缩进', 'Normal', '正文']:
-        if name in available:
-            p.style = doc.styles[name]
-            break
-    return p
-
-def add_formula(doc, latex_text):
-    p = doc.add_paragraph(latex_text)
-    for name in ['公式', 'MTDisplayEquation']:
-        if name in available:
-            p.style = doc.styles[name]
-            break
-        else:
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    return p
-
-# 4. 按章节写入内容（说明书各节 + 说明书摘要）
-# 5. 另存为新文件
-doc.save('一种XXX方法_专利技术交底书.docx')
-```
+核心要点：
+1. 加载模板后，先用 `find_section_boundaries()` 定位 3 个携带 `sectPr` 的边界段落 [0]、[1]、[12]
+2. 清除模板占位内容时，**绝不删除边界段落**，只删除非边界段落
+3. **Section 0（说明书摘要）**：在 `sect0_para` 之前插入摘要文本（≤300字）
+4. **Section 1（摘要附图）**：保持空白，不写入任何内容
+5. **Section 2（说明书）**：在 `sect2_para` 之前依次插入：发明名称、技术领域、背景技术、发明内容、附图说明、具体实施方式
+6. **Section 3（说明书附图）**：在文档末尾追加图题段落（图1、图2...）
+7. 使用 `anchor._element.addprevious(p._element)` 在锚点前插入，而非 `doc.add_paragraph()` 追加到末尾
 
 ### Phase 3：静默生成附图提示词（自动触发）
 
@@ -305,14 +270,12 @@ for p in doc_check.paragraphs:
 【说明书摘要】（≤300 字）
 ```
 
-注：权利要求书由专利代理人根据本交底书另行撰写，交底书中不包含。
-如用户明确要求生成权利要求书，可参考 [claims-guide.md](references/claims-guide.md) 单独生成。
+注：权利要求书由专利代理人根据本交底书另行撰写，**交底书中严禁包含权利要求书**。如用户要求生成权利要求书，应明确告知其不属于技术交底书范畴，建议交由专利代理人处理。
 
 ## 参考规范
 
 - [去 AI 痕迹与专利语言规范](references/writing-rules.md)
 - [python-docx 代码模板](references/docx-patterns.md)（含 Run 分裂修复、链式替换、段落删除等模式）
-- [权利要求书撰写指南](references/claims-guide.md)（仅供参考，交底书中不生成）
 
 ## 插图写入
 
