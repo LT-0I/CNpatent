@@ -312,18 +312,6 @@ def detect_tier3(text):
 
 ---
 
-## 与 CNpatent 主词表的关系
-
-CNpatent skill 的 [writing-rules.md](../../CNpatent/references/writing-rules.md)
-有更全面的禁用词表（按 6 大类组织）。本文档的 Tier 1 词表是 CNpatent 主词表
-的**子集**，但增加了"等级"信息。
-
-集成时，本 skill 的 Tier 1 词表与 CNpatent 主词表合并使用：
-- 共享：所有词汇定义
-- 本 skill 独有：Tier 2/3 模型、聚集判定、密度阈值
-
----
-
 ## 调优建议
 
 如果在某类专利中误报率高，可以：
