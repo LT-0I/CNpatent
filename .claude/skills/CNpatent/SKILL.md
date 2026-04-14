@@ -165,6 +165,8 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 ### Phase 0：输入确认与大纲生成
 
 > 子步骤：工作目录初始化 → 场景迁移 → 微创新设计 → 主旨四段式 → 结构化大纲 → 用户确认
+>
+> **角色文件**：本阶段 orchestrator **遵循** [`agents/cnpatent-planner.md`](agents/cnpatent-planner.md) 中定义的 Planner 推理协议（主旨四段式 / 三方对应 / 术语锁定 / 开始前 6 个推理问题），**不**通过 Agent 工具派发子 agent——Phase 0 需要多轮与用户交互确认大纲，子 agent 的 context 隔离反而不利。
 
 1. 读取用户提供的参考素材
 2. 若用户未指定**目标应用领域**，**必须主动询问**，不可跳过
@@ -255,7 +257,9 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 ### Phase 1：任务拆分与并行生成（自动执行）
 
-大纲确认后，自动进入多 Agent 并行生成流程。**所有 Agent 必须使用 opus 模型。**
+大纲确认后，自动进入多 Agent 并行生成流程。4 个 Writer 的**角色简报和写作规则**定义在 [`agents/cnpatent-writer-{a,b,c,d}.md`](agents/) 角色文件里；orchestrator 本阶段的任务是 **读取角色文件 → 拼接本次任务上下文 → 用 Agent 工具并行派发**。
+
+**模型强制**：每次调用 Agent 工具时**必须显式传 `model="opus"`**（从角色文件 frontmatter 的 `model` 字段读取）。这是 `.claude/skills/CNpatent/agents/` 下未注册 agent 文件的**唯一运行时强制点**——frontmatter 本身不会被 Claude Code 的 subagent 发现机制读取。关于"能硬强制 vs 只能软影响"的完整约定，见 [`agents/README.md`](agents/README.md)。
 
 **步骤 1 — 任务拆分**：根据确认的大纲，将全文拆分为以下 4 个独立任务：
 
@@ -268,21 +272,27 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 > 本交底书格式**不含摘要**（300字摘要），因此相比"说明书"格式减少了 Writer-E。
 
-**步骤 2 — 准备每个 Writer 的上下文包**：
+**步骤 2 — 准备每个 Writer 的任务上下文包**：
 
-每个 Writer Agent 的 prompt 中必须注入以下内容：
-1. **锁定的大纲**（仅与该 Writer 任务相关的部分）
-2. **参考素材原文片段**（与该 Writer 负责章节对应的参考材料段落）
-3. **术语锁定表**（从大纲中提取，确保所有 Writer 使用完全相同的术语）
-4. **writing-rules.md 的完整禁用词表**（第一层去 AI 预防）
-5. **信息源锚定要求**（铁律 5）：
-   - 数值参数必须标注来源 `[源:论文X节]` 或 `[源:大纲约定]`
-   - 无法标注来源的参数禁止编造，必须标记 `[待确认:具体问题]`
-   - 信息源标注仅用于审查，写入 DOCX 前自动移除
-6. **本 Writer 的字数上限**（严格遵守）
-7. **对应章节的格式规范**（从 [writing-rules.md](references/writing-rules.md) 中提取相关章节，包括"背景技术·编号局限列举"、"发明目的编号条目"、"技术解决方案编号步骤"、"技术效果编号条目"、"具体实施方式·编号展开"）
+角色简报、写作规则、禁用词避坑清单、所述回指策略、对应三角守护等**常驻内容**已经写在 `agents/cnpatent-writer-{a,b,c,d}.md` 的 body 里——orchestrator 不要在这里重复。orchestrator 只负责注入**本次任务特有的上下文**：
 
-**步骤 3 — 并行派发**：使用 Agent 工具并行启动 4 个 Writer Agent（单条消息中发出多个 Agent 调用），等待全部完成。
+1. **锁定的大纲片段** —— `01_outline.md` 中与该 Writer 任务相关的部分（含主旨四段式）
+2. **参考素材原文片段** —— 与该 Writer 负责章节对应的参考材料段落
+3. **术语锁定表** —— 从大纲里提取，每个 Writer 都收到完全相同的一份
+4. **Writer-C/D 衔接信息** —— Writer-C 的最后一个步骤编号 K（供 Writer-D 的起点使用）
+5. **工作目录绝对路径** —— `outputs/[专利名称]/sections/` 的完整路径，供 Writer 直接写文件
+6. **`[待确认]` / `[源:...]` 标记约定** —— 一句话提醒；详细规则在角色文件 body 里
+
+禁用词表、字数上限、对应章节格式规范、所述回指策略**都不再在此处重复注入**——它们是 Writer 的"角色记忆"，写在角色文件 body 里，避免 orchestrator 每次重拼 prompt 引入漂移。
+
+**步骤 3 — 并行派发**：对每个 Writer 执行：
+
+1. `Read` 角色文件 `agents/cnpatent-{writer-id}.md`
+2. 从 frontmatter 解析出 `model`（统一为 `opus`）和 `outputs` 字段
+3. 把 body 作为 system-prompt 级的角色描述，与步骤 2 的任务上下文拼接为完整 prompt
+4. 调用 Agent 工具，参数为：`subagent_type="general-purpose"`、**`model="opus"` 显式传**、`prompt=<body + task_context>`、`run_in_background=True`
+
+所有 4 个 Agent 调用在**单条消息内**发出（并行），等待全部完成。
 
 **步骤 4 — 落盘到 sections/**：每个 Writer Agent 必须把输出（含 `[源:...]` 和 `[待确认:...]` 标记）直接写入 `outputs/[专利名称]/sections/` 下对应的章节文件。**没有 writer-named 中间文件**：Writer 视角的产物就是用户视角的章节文件。
 
@@ -305,38 +315,27 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 ### Phase 2：自动审查与修正（自动执行）
 
-所有 Writer 完成后，自动启动 Reviewer Agent（使用 opus 模型）执行三重审查。
+所有 Writer 完成后，自动启动 Reviewer Agent 执行**三重 rubric 审查**。Reviewer 的角色简报、完整 rubric（Rubric-A 一致性 / Rubric-B 反幻觉 / Rubric-C 去 AI 味）、输出格式、退回 Writer 的 `fix_spec` 规范全部定义在 [`agents/cnpatent-reviewer.md`](agents/cnpatent-reviewer.md) 中——不在 SKILL.md 重复 rubric 细节。
 
-**审查 1 — 一致性检查**：
-- 术语是否全文统一（对照术语锁定表，检查是否存在同义词轮换）
-- 图号是否连续（图1~图N 无跳号）、正文图引用是否一致
-- 编号连续性：背景技术局限 (1)-(N)、发明目的 (1)-(N)、技术解决方案 (1)-(N)、技术效果 (1)-(N)、具体实施方式步骤 (1)-(N)
-- 发明目的中的"优势条目"与技术效果中的"效果条目"是否一一对应、一一映射到 技术解决方案 中的核心创新步骤
-- Writer-C 和 Writer-D 的衔接是否自然（步骤编号连续、无重复、无遗漏）
-- 发明内容的技术方案步骤是否与具体实施方式的详细步骤一一对应
+**派发协议**（与 Phase 1 相同）：orchestrator `Read` `agents/cnpatent-reviewer.md` → 拼接任务上下文（全部 8 个 section 文件路径 + `01_outline.md` + 参考素材 + 术语锁定表 + 当前轮次 1/2）→ 调用 Agent 工具，**`model="opus"` 显式传**。
 
-**审查 2 — 反幻觉检查**：
-- 检查所有 `[源:...]` 标注是否合理（源头是否确实存在于参考素材中）
-- 汇总所有 `[待确认:...]` 标记，准备在最终输出中提示用户
-- 公式是否与参考素材一致（变量名可做领域化蒙皮，但公式结构不得改变）
-- 参数值是否有出处（参考素材或大纲约定）
-- 是否存在参考素材中完全没有的技术描述（排除大纲中约定的微创新部分）
+**设计约束**（research-backed，详见 `agents/README.md` 的"设计原则"章节）：
 
-**审查 3 — 去 AI 味检查**（铁律 3 第三层）：
-- 对照 [writing-rules.md](references/writing-rules.md) 禁用词表做残留扫描
-- 执行句式结构检测（平行结构、段落均匀度、三段式凑数、连续关联词）
-- 执行同义词轮换检测
-- 调用 `CNpatent-humanizer` skill 做最终人类化润色
+- **Rubric-based 非 open critique**：Reviewer 逐项 pass/fail 检查 closed rubric，不做"这段写得怎么样"式开放式评论。研究表明 open critique 会触发 sycophancy（Reviewer 附和 Writer）
+- **不输出替代草稿**：涉及语义 / 结构的问题必须退回对应 Writer。只有禁用词残留 / 标点 / 编号格式等**机械性问题**才由 Reviewer 直接 `Edit` 就地修补。研究表明允许 Reviewer 改写会触发 "over-correction stripping voice" 失败模式
+- **硬 cap 2 轮**：Reviewer → Writer → Reviewer 最多往返 2 轮。infinite revision loop 是多 agent 写作管线的 top failure mode（MAST 框架）
 
-**审查结果处理**：
-- 发现问题后，将具体问题描述和修改要求通过 SendMessage 退回对应 Writer Agent 修正
-- 最多 2 轮修正循环。若 2 轮后仍有 `[待确认]` 参数，保留标记
-- Reviewer 负责 Writer-C/D 衔接处的段落过渡修正（可直接修改，无需退回）
+**Reviewer 输出 & 回传协议**：
+
+- Reviewer 产出结构化 chat 总结（Rubric-A/B/C 逐项 pass/fail + 退回清单 + `[待确认]` 汇总），**不**输出替代草稿
+- **机械性修补**（禁用词残留 / 半角标点 / 编号格式 / Writer-C/D 衔接处段落过渡）由 Reviewer 直接 `Edit` `sections/*.md`，结果就地生效
+- **语义 / 结构问题**由 Reviewer 写成带有 `section` + `quote` + `issue_type` + `fix_spec` 四元组的退回清单；orchestrator 通过 SendMessage 把 `fix_spec` 路由到对应 Writer；Writer 修改后 orchestrator 触发第 2 轮 Reviewer
+- `CNpatent-humanizer` 返回 0–100 分的去 AI 味评分，Reviewer 据此决策：
+  - 分数 ≥ 50：退回对应 Writer 整段重写
+  - 分数 25–49：Reviewer 就地修补
+  - 分数 < 25：通过
+- **第 2 轮结束仍有未解决的结构性问题**，保留在 chat 总结里提示 orchestrator 让用户人工介入，**不**进入第 3 轮
 - 审查通过后，移除所有 `[源:...]` 内部标注，保留 `[待确认:...]` 标记
-- `CNpatent-humanizer` 返回 0-100 分的去 AI 味评分，Reviewer 据此决策：
-  - 分数 ≥ 50：退回对应 Writer 整段重写（走上述 SendMessage 退回流程）
-  - 分数 25-49：Reviewer 直接在 sections/*.md 就地修补
-  - 分数 < 25：视为通过去 AI 味审查，不做改动
 
 **落盘策略**：Reviewer 的所有修改直接写回 `sections/*.md`（in-place 编辑）。**不保留任何审查中间文件**：审查报告、问题清单、Writer 退回轮次、人类化润色前/后对比都仅以 Reviewer 在聊天窗口的简要总结呈现，不落盘。调用 `CNpatent-humanizer` skill 时也是对 sections 文件就地处理。
 

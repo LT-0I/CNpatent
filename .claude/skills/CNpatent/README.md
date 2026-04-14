@@ -7,7 +7,7 @@
 - **模板驱动生成** — 加载内置专利模板，由模板样式（`Heading 1`/`Heading 2`/`Normal`/`Caption`/`公式`）承载字体格式
 - **主旨四段式结构** — 整篇专利围绕"针对什么问题→采取什么方法→基于什么原理→带来什么提升"四要素展开，背景技术局限↔发明目的优势↔技术效果效果三方一一对应
 - **领域驱动微创新** — 要求用户指定目标应用领域，用于场景迁移与专利查重规避
-- **多 Agent 并行架构** — Planner 生成大纲 → 4 个 Writer Agent 并行写作 → Reviewer Agent 自动审查，大纲确认后全程无需人工干预
+- **多 Agent 并行架构** — Planner 生成大纲 → 4 个 Writer Agent 并行写作 → Reviewer Agent 三重 rubric 审查（非 open critique），大纲确认后全程无需人工干预。所有角色（Planner / Writer-A/B/C/D / Reviewer）的角色简报和写作规则定义在 `agents/` 子目录下的角色文件里；orchestrator 调用时显式传 `model="opus"` 强制模型层级
 - **三层去 AI 痕迹** — 写作预防 + 正则自动替换 + Reviewer 终审（调用 `CNpatent-humanizer` skill 做专利专用的人类化润色）
 - **信息源锚定（防幻觉）** — 所有技术内容追溯到参考素材，无法确认的参数标记 `[待确认]`，杜绝内容编造
 - **可编辑的最终态文本 + 断点重启** — 工作目录只保留 `01_outline.md`（大纲）和 `sections/*.md`（8 个章节文件，DOCX 写入前的最终文本），用户编辑任意章节后只需重跑 Phase 3 即可重新生成 DOCX，无需重跑 Writer/Reviewer
@@ -56,6 +56,14 @@ your-project/
             ├── LICENSE
             ├── assets/
             │   └── 交底书模板.docx
+            ├── agents/                    # 角色提示词模板（非原生子 agent，由 orchestrator 读入拼接）
+            │   ├── README.md              # 架构说明 + orchestrator 调用约定（伪代码）
+            │   ├── cnpatent-planner.md    # Phase 0 大纲生成
+            │   ├── cnpatent-writer-a.md   # Writer-A（一/二/三节）
+            │   ├── cnpatent-writer-b.md   # Writer-B（四节，对应三角守护者）
+            │   ├── cnpatent-writer-c.md   # Writer-C（五 + 六前半）
+            │   ├── cnpatent-writer-d.md   # Writer-D（六后半 + 固定结尾）
+            │   └── cnpatent-reviewer.md   # Phase 2 三重 rubric 审查
             ├── references/
             │   ├── docx-patterns.md      # python-docx 用法示例 + Common Issues
             │   └── writing-rules.md      # 禁用词表 + 写作规范 + 句式检测
@@ -157,15 +165,16 @@ Phase 6  附图修正（按需触发）
 
 ### 多 Agent 架构
 
-| Agent | 职责 | 字数上限 |
-|-------|------|---------|
-| Writer-A | 一、发明名称 + 二、技术领域 + 三、背景技术 | ~1200字 |
-| Writer-B | 四、发明内容（发明目的 + 技术解决方案 + 技术效果） | ~3500字 |
-| Writer-C | 五、附图说明 + 六、具体实施方式 · 前半 | ~3500字 |
-| Writer-D | 六、具体实施方式 · 后半 + 总结 | ~3500字 |
-| Reviewer | 一致性 + 防幻觉 + 去AI味 三重审查 | — |
+| Agent | 职责 | 字数上限 | 角色文件 |
+|-------|------|---------|---------|
+| Planner | Phase 0 大纲生成（主旨四段式 / 三方对应 / 术语锁定） | — | `agents/cnpatent-planner.md` |
+| Writer-A | 一、发明名称 + 二、技术领域 + 三、背景技术 | ~1200字 | `agents/cnpatent-writer-a.md` |
+| Writer-B | 四、发明内容（发明目的 + 技术解决方案 + 技术效果） | ~3500字 | `agents/cnpatent-writer-b.md` |
+| Writer-C | 五、附图说明 + 六、具体实施方式 · 前半 | ~3500字 | `agents/cnpatent-writer-c.md` |
+| Writer-D | 六、具体实施方式 · 后半 + 固定结尾 | ~3500字 | `agents/cnpatent-writer-d.md` |
+| Reviewer | Rubric-A 一致性 + Rubric-B 反幻觉 + Rubric-C 去 AI 味 | — | `agents/cnpatent-reviewer.md` |
 
-所有 Agent 使用 opus 模型，确保输出质量一致。
+**模型强制**：orchestrator 每次调用 Agent 工具时**显式传** `model="opus"`（从角色文件 frontmatter 读取），这是唯一的运行时强制点——`agents/` 下的文件**不是**原生 Claude Code 子 agent，frontmatter 不会被自动发现。详见 [`agents/README.md`](agents/README.md)。
 
 ### 三层去 AI 痕迹
 
