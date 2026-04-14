@@ -3,7 +3,7 @@ Final deterministic anti-AI cleanup pass.
 
 Why this file exists:
     The Reviewer agent does the heavy lifting on AI-detection (semantic
-    review, sentence-structure analysis, calling humanizer skill). But
+    review, sentence-structure analysis, calling CNpatent-humanizer skill). But
     the Reviewer is an LLM, so any single miss leaves an AI-flavoured
     word in the final docx. This module is the *deterministic safety
     net*: pure regex, no AI judgement, run unconditionally just before

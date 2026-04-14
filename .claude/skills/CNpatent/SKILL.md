@@ -112,7 +112,7 @@ doc = load_template()
 - a）禁用词残留扫描（逐词比对禁用词表）
 - b）句式结构检测：平行结构、段落均匀度、三段式凑数、连续关联词（见 [writing-rules.md](references/writing-rules.md) 的"句式结构检测规则"章节）
 - c）同义词轮换检测：同一技术概念是否全文术语统一
-- d）调用 `humanizer` skill 做最终人类化润色
+- d）调用 `CNpatent-humanizer` skill 做最终人类化润色
 
 不合格内容退回对应 Writer 修正，最多 2 轮。最终文本必须符合专利文书的严谨、客观、技术性风格，读起来像领域工程师而非 AI 所写。
 
@@ -326,15 +326,19 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 - 对照 [writing-rules.md](references/writing-rules.md) 禁用词表做残留扫描
 - 执行句式结构检测（平行结构、段落均匀度、三段式凑数、连续关联词）
 - 执行同义词轮换检测
-- 调用 `humanizer` skill 做最终人类化润色
+- 调用 `CNpatent-humanizer` skill 做最终人类化润色
 
 **审查结果处理**：
 - 发现问题后，将具体问题描述和修改要求通过 SendMessage 退回对应 Writer Agent 修正
 - 最多 2 轮修正循环。若 2 轮后仍有 `[待确认]` 参数，保留标记
 - Reviewer 负责 Writer-C/D 衔接处的段落过渡修正（可直接修改，无需退回）
 - 审查通过后，移除所有 `[源:...]` 内部标注，保留 `[待确认:...]` 标记
+- `CNpatent-humanizer` 返回 0-100 分的去 AI 味评分，Reviewer 据此决策：
+  - 分数 ≥ 50：退回对应 Writer 整段重写（走上述 SendMessage 退回流程）
+  - 分数 25-49：Reviewer 直接在 sections/*.md 就地修补
+  - 分数 < 25：视为通过去 AI 味审查，不做改动
 
-**落盘策略**：Reviewer 的所有修改直接写回 `sections/*.md`（in-place 编辑）。**不保留任何审查中间文件**：审查报告、问题清单、Writer 退回轮次、humanizer 润色前/后对比都仅以 Reviewer 在聊天窗口的简要总结呈现，不落盘。如调用 `humanizer` / `CNpatent-humanizer` skill，也是对 sections 文件就地处理。
+**落盘策略**：Reviewer 的所有修改直接写回 `sections/*.md`（in-place 编辑）。**不保留任何审查中间文件**：审查报告、问题清单、Writer 退回轮次、人类化润色前/后对比都仅以 Reviewer 在聊天窗口的简要总结呈现，不落盘。调用 `CNpatent-humanizer` skill 时也是对 sections 文件就地处理。
 
 **Why**：按照"工作目录只保留 DOCX 写入前的最终态"的设计原则，审查/润色过程产物属于"过程态"，不应留在工作目录里污染编辑视图。如需精确的变更追溯，建议用户在 `outputs/[专利名称]/` 下做 `git init` 自行管理（详见后文【工作目录与断点重启机制】）。
 
@@ -427,7 +431,7 @@ sections/ 中已经是按章节组织的最终文本，本阶段只做"清理 + 
 1. `01_outline.md` —— Phase 0 用户确认的大纲（断点重启时从此读起）
 2. `sections/*.md` —— 8 个章节文件，DOCX 写入前的最终文本（用户可直接编辑）
 
-**设计原则**：审查报告、Writer 原始草稿、humanizer 前/后对比等"过程产物"一律不落盘。修改场景下用户只需要最终态；过程态由 Reviewer 在聊天窗口的总结承载，如需精确变更追溯由用户用 git 自行管理。
+**设计原则**：审查报告、Writer 原始草稿、人类化润色前/后对比等"过程产物"一律不落盘。修改场景下用户只需要最终态；过程态由 Reviewer 在聊天窗口的总结承载，如需精确变更追溯由用户用 git 自行管理。
 
 ### 工作目录结构
 
