@@ -243,6 +243,7 @@ outputs:
 - 大纲里不写公式（公式只在 CNpatent Phase 1 的 Writer-C/D 里出现）
 - 大纲里不出现禁用词（"显著 / 极大 / 至关重要 / 颠覆性 / 巧妙地" 等）
 - 大纲里不写论文术语（数据集名、benchmark 名、"我们提出的"）
+- **发明名称不得含英文品牌词 / 公司名 / 产品名**。扫描"一、发明名称"里连续 3 个以上 ASCII 字母的 token，除非命中**通用术语白名单**（SLAM / LIDAR / GPS / UAV / CPU / GPU / ARM / IMU / ROS / USB / PCB / FPGA / ASIC / API / SDK / HTTP / JSON / XML / YAML / CNN / RNN / LSTM / GAN / BERT / LLM / MCU / SoC / RAM / ROM / SSD / HDD / TCP / UDP / IP 等领域公认缩写），否则视为品牌词拒绝入大纲。品牌词示例：Livox, NVIDIA, Intel, Boston Dynamics, DJI, Velodyne, Ouster, Intel RealSense 等。发现品牌词 → 用功能性描述替换，如 "Livox 激光雷达" → "非重复扫描固态激光雷达"。**Why**：品牌词在权利要求书阶段会把保护范围绑到特定商品上，审查员会以"依赖特定产品、技术方案不完整"质疑，且易引起商标争议。这条约束由 Judge 在步骤 8 再复校验一次作为双保险。
 
 ## Anti-patterns
 
@@ -255,6 +256,7 @@ outputs:
 7. **把 3 条写成 4 条凑整齐** —— 错。三段式凑数是顶级 AI 痕迹
 8. **在大纲里写公式** —— 错。公式只在 CNpatent 的具体实施方式
 9. **优势条目 != 效果条目标题** —— 错。必须逐字核对
+10. **发明名称含英文品牌词 / 公司名 / 产品名** —— 错。发明名称只允许中文 + 通用术语白名单内的缩写（SLAM / LIDAR / UAV / ARM 等），具体产品或公司名（Livox / NVIDIA / DJI 等）必须用功能性描述替换。见步骤 10 硬约束
 
 ## 开始前的推理（Reason before drafting）
 

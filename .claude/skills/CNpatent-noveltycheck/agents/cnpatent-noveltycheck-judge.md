@@ -336,7 +336,30 @@ judge_version: cnpatent-noveltycheck v1.0
 并由 CNIPA 审查员在实质审查阶段做出.
 ```
 
-## 步骤 8：绿灯时的 CNpatent 触发提示
+## 步骤 8：发明名称复校验（v1.1 新增）
+
+在写入 `5_verified_outline.md` 之前，对"一、发明名称"字段做复校验。这是 Phase A Screener 步骤 10 硬约束的**双保险关卡**，防止 Screener 漏网或 candidate_outline 里混入英文品牌词。
+
+**规则**：发明名称不得含英文品牌词 / 公司名 / 产品名。允许通用术语白名单内的缩写（SLAM / LIDAR / GPS / UAV / CPU / GPU / ARM / IMU / ROS / USB / PCB / FPGA / ASIC / API / SDK / HTTP / JSON / XML / YAML / CNN / RNN / LSTM / GAN / BERT / LLM / MCU / SoC / RAM / ROM / SSD / HDD / TCP / UDP / IP 等）。品牌词示例：Livox / NVIDIA / Intel / Boston Dynamics / DJI / Velodyne / Ouster / Intel RealSense。
+
+**Why**：品牌词在权利要求书阶段会把保护范围绑到特定商品上，审查员会以"依赖特定产品、技术方案不完整"质疑，且易引起商标争议。2026-04-15 测试（Issue 4）发现 4 个 Writer 全部沿用了前端未清洗的 "Livox"，下游补救成本很高，必须在 verified_outline 写入前就拦住。
+
+**复校验步骤**：
+
+1. 从 `2_candidate_outline.md` 读"一、发明名称"字段原文
+2. 正则扫描连续 3 个以上 ASCII 字母的 token（`[A-Za-z]{3,}`）
+3. 对每个 token，查通用术语白名单（见上）：
+   - 命中白名单 → 通过
+   - 不在白名单 → 视为品牌词
+4. 有任意品牌词时：
+   - 用该品牌词的**功能性描述**替换（例："Livox" → "非重复扫描固态激光雷达"，"NVIDIA Jetson" → "嵌入式异构计算模块"，"DJI" → "商用多旋翼平台"）
+   - 把替换后的发明名称写入 `5_verified_outline.md` 的"一、发明名称"字段，而不是原文
+   - 在 `5_verified_outline.md` 的"九、查新验证元信息"里加一条"发明名称修正记录"：原名称 → 修正后名称，原因 "含英文品牌词 <token>"
+5. 无品牌词时：发明名称原样写入，不加修正记录
+
+**步骤 9（下一步）** 的聊天窗口输出里，若本步骤做了修正，必须显式告知用户："发明名称里的 '<品牌词>' 已被 Judge 替换为 '<功能描述>'，如不同意请回退到 Phase A 重跑"。
+
+## 步骤 9：绿灯时的 CNpatent 触发提示
 
 如果走绿灯，在写完 `5_verified_outline.md` 后，**在聊天窗口**（不是写入文件）输出以下内容：
 
@@ -363,6 +386,7 @@ judge_version: cnpatent-noveltycheck v1.0
 6. **把"等同"当成破坏新颖性** —— 错。等同不破坏新颖性, 只破坏创造性
 7. **绿灯时没有填完"九、查新验证元信息"** —— 错。这是 CNpatent Phase 0 的必读字段
 8. **跳过陷阱扫描** —— 错。6 个陷阱必须逐一扫
+9. **跳过步骤 8 发明名称复校验** —— 错。这是 Phase A Screener 的双保险关卡, 品牌词如 Livox / NVIDIA 等必须替换为功能性描述后才能写入 5_verified_outline.md
 
 ## 开始前的推理
 
