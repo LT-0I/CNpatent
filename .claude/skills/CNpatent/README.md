@@ -1,6 +1,8 @@
 # CNpatent — 中国发明专利技术交底书生成器
 
-一个 [Claude Code Skill](https://docs.anthropic.com/en/docs/claude-code)，将学术论文、研发笔记、开源项目等参考素材转化为符合 CNIPA 规范的专利技术交底书（.docx）。
+一个 [Claude Code Skill](https://docs.anthropic.com/en/docs/claude-code)，将经新颖性查新验证的大纲转化为符合 CNIPA 规范的专利技术交底书（.docx）。
+
+> ⚠️ **本 skill 不再独立接受参考素材 + 领域作为输入**。CNpatent 是 [CNpatent-noveltycheck](../CNpatent-noveltycheck/) 工作流的**下游环节**，只接受 `5_verified_outline.md`（由 CNpatent-noveltycheck Phase C 绿灯输出）作为输入。用户要写中国发明专利，必须从 CNpatent-noveltycheck 开始。
 
 ## 功能特点
 
@@ -27,18 +29,18 @@ pip install python-docx
 
 | Skill 名称 | 用途 | 必需 |
 |------------|------|:----:|
+| **CNpatent-noveltycheck** | 前置新颖性 + 创造性初筛 skill，产出 `5_verified_outline.md`。CNpatent 不接受其他输入 | **前置必需** |
 | **CNpatent-humanizer** | 专利专用的去 AI 写作痕迹 skill（3 级词汇检测 / 加权评分 / 9 步重写流水线） | 是 |
-| **pdf** | 读取用户提供的 PDF 格式参考素材（论文、技术文档等） | 是 |
-| **docx** | 读取用户提供的 .docx 格式参考素材或已有专利草稿 | 是 |
+| **pdf** | CNpatent-noveltycheck 读 PDF 参考文献用 | 是 |
+| **docx** | CNpatent-noveltycheck 读 DOCX 参考文献用 | 是 |
 
 ## 必需输入
 
-| 输入项 | 必需 | 说明 | 示例 |
-|--------|:----:|------|------|
-| **参考素材** | 是 | 学术论文、技术文档、开源项目等 | PDF / .docx / 文本 / 链接 |
-| **目标应用领域** | 是 | 专利要落地的具体工程场景 | 肛瘘术后创口三维重建 / 工业焊缝检测 |
-| 现有专利参考 | 可选 | 同领域已有专利，用于差异化设计 | 专利号 / 标题 / 摘要 |
-| 输出目录 | 可选 | 工作目录，保留全部中间文件，默认 `outputs/[专利名称]/` | `outputs/uav_recon/` |
+| 输入项 | 必需 | 说明 |
+|--------|:----:|------|
+| **`outputs/[专利名称]/5_verified_outline.md`** | 是 | 由 CNpatent-noveltycheck Phase C 绿灯输出的 verified_outline，含九、查新验证元信息 |
+
+**原来的参考素材 + 目标应用领域 + 现有专利参考输入已被移除**。这些由 CNpatent-noveltycheck 处理。直接调 CNpatent 会检测 `5_verified_outline.md` 不存在，拒绝执行，并提示用户先运行 CNpatent-noveltycheck。
 
 ## 安装方式
 
@@ -82,25 +84,30 @@ your-project/
 
 ## 使用方法
 
-在 Claude Code 中提供参考素材和目标领域：
+**本 skill 不应被直接调用**。正确的入口是 CNpatent-noveltycheck：
 
 ```
 帮我写一份专利技术交底书，参考这篇论文，目标领域是工业焊缝检测
 ```
 
-```
-把这篇论文转成专利交底书，应用场景是自动驾驶障碍物识别
-```
+Claude 会识别这是一个专利写作请求，自动启动 CNpatent-noveltycheck skill，完成三阶段流程（Phase A 自动筛查 → Phase B 人工核查 → Phase C 决策）。绿灯通过后，CNpatent-noveltycheck 会**自动触发** CNpatent 完成大纲到 .docx 的写作。
 
-如未指定目标领域，Skill 会主动询问。
+**不允许的用法**：
+
+```
+❌ 直接调 CNpatent:
+"帮我把这篇论文写成 CNpatent 的专利交底书"
+
+会得到拒绝提示:
+"❌ 未检测到 5_verified_outline.md. CNpatent 不再独立接受参考素材 + 领域的输入.
+请先运行 CNpatent-noveltycheck skill."
+```
 
 ## 执行流程
 
 ```
-Phase 0  输入确认 → 工作目录初始化 → 场景迁移 → 结构化大纲生成（含主旨四段式）
-           ↓
-         用户确认大纲（唯一确认点） → 写入 01_outline.md
-           ↓
+Phase 0  检测 5_verified_outline.md → schema 校验 → 复制到 01_outline.md
+           ↓                                           (无用户确认, 确认在前置 skill 已完成)
 Phase 1  自动任务拆分 → 4 个 Writer Agent 并行写入 sections/*.md（8 个章节文件）
            ↓
 Phase 2  Reviewer Agent 三重审查（一致性 + 防幻觉 + 去AI味）→ 直接修改 sections/*.md
@@ -113,7 +120,33 @@ Phase 5  静默生成 AI 附图提示词文档
            ↓
 Phase 6  附图修正（按需触发）
 
-修改场景：用户编辑 sections/*.md → 仅重跑 Phase 3 即可重新生成 DOCX
+修改场景:
+  - 用户编辑 sections/*.md → 仅重跑 Phase 3 即可重新生成 DOCX
+  - 用户要改大纲 → 回到 CNpatent-noveltycheck 重跑 Phase A/C, 重新生成 verified_outline
+```
+
+**完整的用户工作流（含 CNpatent-noveltycheck）**：
+
+```
+用户: "帮我写专利, 参考 XYZ.pdf, 领域是 ABC"
+           ↓
+┌───────────────────────────────────┐
+│  CNpatent-noveltycheck (前置关卡)    │
+│  Phase A: 自动筛查 + 草稿大纲        │
+│  Phase B: 付费库人工核查指南         │
+│  ⏸  [用户在 incoPat 做人工核查]      │
+│  Phase C: 决策 (绿/黄/红灯)          │
+└───────────────────────────────────┘
+           ↓
+     5_verified_outline.md (绿灯)
+           ↓
+┌───────────────────────────────────┐
+│  CNpatent (下游书写)                │
+│  Phase 0: 接收 verified_outline     │
+│  Phase 1-6: 写 sections → docx      │
+└───────────────────────────────────┘
+           ↓
+  [专利名称]_专利技术交底书.docx
 ```
 
 ## 输出文件

@@ -1,18 +1,22 @@
 ---
 name: CNpatent
 description: >
-  Chinese invention patent technical disclosure generator (专利技术交底书).
-  Transforms reference materials (academic papers, R&D notes, open-source projects)
-  into CNIPA-compliant technical disclosure documents (.docx) in the electrical
+  Chinese invention patent technical disclosure writer (专利技术交底书生成器, 下游书写环节).
+  **This skill is the DOWNSTREAM component of the CNpatent-noveltycheck workflow and
+  is NOT meant to be invoked directly**. It transforms a novelty-verified outline
+  (`5_verified_outline.md` produced by CNpatent-noveltycheck Phase C green light)
+  into a CNIPA-compliant technical disclosure document (.docx) in the electrical
   (电学类) disclosure format, with numbered sections 一～六 (发明名称、技术领域、
   背景技术、发明内容、附图说明、具体实施方式). The disclosure does NOT include
   section 七 (权利要求书) — claims are drafted separately by the patent agent.
-  Use when user asks to: (1) write a Chinese patent disclosure (技术交底书),
-  (2) draft a Chinese electrical patent disclosure (电学类专利交底书),
-  (3) convert a paper or technical document into a patent disclosure,
-  (4) rewrite or restructure an existing patent draft to the 电学类交底书 format,
-  (5) generate patent figures/prompts, or (6) any task involving Chinese invention
-  patent disclosure document creation or editing.
+  When the user asks to write a Chinese patent disclosure, Claude should
+  **FIRST invoke CNpatent-noveltycheck skill** (the entry point for the patent
+  writing pipeline), which runs novelty + inventiveness screening and then
+  automatically triggers this CNpatent skill on green light. If the user directly
+  tries to invoke this skill without a verified_outline, Phase 0 will detect the
+  missing file, refuse to execute, and instruct the user to run CNpatent-noveltycheck
+  first. Do NOT use this skill for raw paper + domain inputs — that workflow was
+  moved to CNpatent-noveltycheck.
 ---
 
 # CNpatent — 中国发明专利技术交底书生成器（电学类格式）
@@ -22,32 +26,36 @@ description: >
 
 ## Quick Start
 
-1. 确认用户提供的**参考素材**和**目标应用领域**（若未提供领域则主动询问）
-2. 初始化工作目录 `outputs/[专利名称]/`，所有中间文件统一保留于此
-3. 基于目标领域执行场景迁移与微创新设计，规避现有专利
-4. 生成结构化大纲（含主旨四段式 + 各章节要点 + 预计附图 + 术语锁定 + 篇幅预算），与用户确认——**这是唯一的用户确认点**
-5. 大纲确认后自动执行：4 个 Writer 并行生成 → Reviewer 三重审查 → 整合写入 .docx
-6. 工作目录只保留 `01_outline.md` 和 `sections/*.md`（8 个章节文件，DOCX 写入前的最终文本），便于用户编辑回滚
-7. 自动静默触发 Phase 5，生成防幻觉 AI 附图提示词
-8. 用户编辑任意 `sections/*.md` 后只需重跑 Phase 3 即可重新生成 DOCX；附图修正走 Phase 6
+本 skill **不再独立接受参考素材 + 领域作为输入**。CNpatent 现在是 CNpatent-noveltycheck 工作流的下游环节，只接受经查新验证的大纲作为输入。
+
+1. **检测** `outputs/[专利名称]/5_verified_outline.md` 是否存在（由 CNpatent-noveltycheck 的 Phase C 生成）
+2. 若**不存在** → 拒绝执行，提示用户先运行 CNpatent-noveltycheck skill，本次调用结束
+3. 若**存在** → 读入 `5_verified_outline.md` 的内容，验证 schema 完整性（含主旨四段式 + 三方对应 + 术语锁定 + 九、查新验证元信息）
+4. 复制内容到 `outputs/[专利名称]/01_outline.md`（保留原 `5_verified_outline.md` 文件不动）
+5. **跳过用户确认环节** —— 大纲确认已在 CNpatent-noveltycheck Phase C 完成
+6. 自动执行：4 个 Writer 并行生成 → Reviewer 三重审查 → 整合写入 .docx
+7. 工作目录保留 `01_outline.md` 和 `sections/*.md`（8 个章节文件，DOCX 写入前的最终文本）
+8. 自动静默触发 Phase 5，生成防幻觉 AI 附图提示词
+9. 用户编辑任意 `sections/*.md` 后只需重跑 Phase 3 即可重新生成 DOCX；附图修正走 Phase 6
 
 ---
 
 ## 必需输入 (Required Inputs)
 
-在开始生成前，**必须**确认以下信息。若用户未主动提供，需主动询问：
+本 skill 的**唯一输入**是 CNpatent-noveltycheck 生成的经查新验证大纲：
 
-| 输入项 | 必需 | 说明 | 示例 |
-|--------|:----:|------|------|
-| **参考素材** | 是 | 学术论文、技术文档、开源项目等 | PDF / 文本 / 链接 |
-| **目标应用领域** | 是 | 专利要落地的具体工程场景，用于场景迁移与微创新 | 无人机集群侦察 / 工业焊缝检测 / 自动驾驶障碍物识别 |
-| 现有专利参考 | 可选 | 同领域已有专利，用于差异化设计、规避查重 | 专利号 / 标题 / 摘要 |
-| 输出目录 | 可选 | 工作目录，用于保留全部中间文件，默认 `outputs/[专利名称]/` | `outputs/uav_recon/` |
+| 输入项 | 必需 | 说明 |
+|--------|:----:|------|
+| **`outputs/[专利名称]/5_verified_outline.md`** | 是 | 由 CNpatent-noveltycheck Phase C 绿灯输出的 verified_outline，含九、查新验证元信息 |
 
-**目标应用领域**的三重作用：
-1. **场景迁移**：将学术算法从实验室环境迁移至目标工程场景，重新推导技术痛点
-2. **微创新设计**：基于目标领域的特定约束（数据特性、硬件限制、行业标准），设计区别于原始论文和现有技术的创新点
-3. **规避专利查重**：通过领域特化的技术方案描述，与同领域已有专利形成差异化
+**原来的参考素材 + 目标应用领域输入已被移除**。这些输入由 CNpatent-noveltycheck 处理，场景迁移、微创新设计、查新查重、大纲生成、用户确认都在前置 skill 完成。CNpatent 只负责"大纲到 .docx"的写作阶段。
+
+**设计原因**：
+- 防止 AI 基于参考文献编造"创新点"写出已被他人申请的专利
+- 写完整篇专利后才发现撞车，成本远大于前置筛查
+- 保留 CNpatent 内部的多 Writer 并行写作 + Reviewer 审查架构不变，只改入口
+
+**如果用户直接调 CNpatent**（例如说"帮我写专利交底书"），skill 会检测 verified_outline 不存在，拒绝执行并指引用户走 CNpatent-noveltycheck。
 
 ---
 
@@ -162,98 +170,78 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 ## 执行流程 (Execution Protocol)
 
-### Phase 0：输入确认与大纲生成
+### Phase 0：大纲接收与 01_outline.md 初始化
 
-> 子步骤：工作目录初始化 → 场景迁移 → 微创新设计 → 主旨四段式 → 结构化大纲 → 用户确认
+> **前置关卡**：本 skill 是 CNpatent-noveltycheck 工作流的下游环节。Phase 0 的唯一任务是**接收前置 skill 产出的 verified_outline 并做格式适配**，不再做任何大纲生成或用户确认的工作。原来的场景迁移 / 微创新设计 / 主旨四段式推导 / 结构化大纲生成 / 用户确认**都已前移到 CNpatent-noveltycheck**。
 >
-> **角色文件**：本阶段 orchestrator **遵循** [`agents/cnpatent-planner.md`](agents/cnpatent-planner.md) 中定义的 Planner 推理协议（主旨四段式 / 三方对应 / 术语锁定 / 开始前 6 个推理问题），**不**通过 Agent 工具派发子 agent——Phase 0 需要多轮与用户交互确认大纲，子 agent 的 context 隔离反而不利。
+> **角色文件**：本阶段 orchestrator 遵循 [`agents/cnpatent-planner.md`](agents/cnpatent-planner.md) 中定义的 Planner 协议。Planner 现在简化为 **verified_outline 适配器**，不再做原创大纲生成。
 
-1. 读取用户提供的参考素材
-2. 若用户未指定**目标应用领域**，**必须主动询问**，不可跳过
-3. **初始化工作目录**（中间文件保留机制）：
-   - 默认目录：`outputs/[专利名称简写]/`（专利名称简写从用户输入或参考素材推导，避免特殊字符）
-   - 若用户指定了输出目录，则使用用户指定的路径
-   - 工作目录用于存放整个工作流的全部中间产物，便于用户基于任一中间文件提出修改意见并断点重启
-   - 详见后文【中间文件保留与断点重启机制】小节
-4. 基于目标领域执行场景迁移：
-   - 禁止照搬学术背景（数据集名称、实验室环境、benchmark 指标）
-   - 将核心算法迁移至用户指定的实际工程场景
-   - 从新场景的工程约束（数据采集条件、硬件限制、行业标准）重新推导技术痛点
-5. 设计微创新点：
-   - 分析参考素材中的核心技术贡献
-   - 结合目标领域的特殊需求，提出至少 1-2 个差异化改进
-   - 确保技术方案与现有技术（若已知）形成明确区分
-6. **写作主旨四段式（全文骨架，详见 [writing-rules.md](references/writing-rules.md) ⚠️ 章节）**：
+**步骤**：
 
-   `针对什么问题(背景) → 采取什么方法(方案) → 基于什么原理(实施) → 带来什么提升(效果)`
+1. **检测 verified_outline**：
+   - 默认检测路径：`outputs/[专利名称]/5_verified_outline.md`
+   - 若用户在调用时提供了工作目录路径，则在该路径下检测
+   - 若未提供专利名称，从 verified_outline 的一、发明名称字段里推导
 
-   关键约束：背景局限（1）-（N）↔ 发明目的优势（1）-（N）↔ 技术效果效果（1）-（N）**三方对应**；优势/效果条目**标题相同、措辞不同**；技术方案步骤数 ≥ 优势条目数。
+2. **文件不存在 → 拒绝执行**：
 
-7. **生成结构化大纲**（本流程的核心产出）：
-
-   大纲必须包含以下内容，以结构化格式展示给用户。**编号统一用全角**`（1）（2）`：
+   在聊天窗口输出以下提示，然后**立即结束本次调用**：
 
    ```
-   ▍主旨四段式（全文骨架）
-       ① 针对什么问题：[1-2 句话浓缩本发明要解决的核心痛点]
-       ② 采取什么方法：[1-2 句话浓缩本发明的核心技术方案]
-       ③ 基于什么原理：[1-2 句话浓缩本发明的关键技术机理]
-       ④ 带来什么提升：[1-2 句话浓缩本发明的可量化效果]
+   ❌ 未检测到 5_verified_outline.md.
 
-   一、发明名称：[名称，≤25字，体现方法/装置属性]
-   二、技术领域：[1-2 句概述]
-   三、背景技术要点：
-       - 现有技术概况：[工程需求 + 现有技术介绍]
-       - 任务场景描述：[本发明考虑的具体任务场景]
-       - 现有技术局限（编号列举，与发明目的优势条目一一对应）：
-         （1）[局限1]
-         （2）[局限2]
-         ...
-       - 本发明引出句：[简述本发明如何改善上述局限]
-   四、发明内容·发明目的要点：
-       - 总起句：[本发明旨在改善...通过对...加以改进，提供一种...的方法。本发明的优势体现在：]
-       - 优势条目（编号列举，与背景技术局限、技术效果效果**三方对应**，标题与效果条目相同）：
-         （1）[优势标题1]：[做了什么 → 通过什么机理 → 带来什么] ← [源:论文X节 / 领域迁移设计]
-         （2）[优势标题2]：[做了什么 → 通过什么机理 → 带来什么] ← [源:...]
-         ...
-       - 综述收尾句：[综上所述，本发明...]
-   四、发明内容·技术解决方案要点：
-       - 开场句（引用附图，给出大致流程）："本发明提供了一种技术解决方案...图1为本发明示意图。本发明的技术解决方案流程如图2所示，以下是该发明的大致流程："
-       - 技术步骤（编号列举，步骤数 ≥ 优势条目数）：
-         （1）[步骤标题]：[概要 + 机理说明]
-         （2）[步骤标题]：[概要 + 机理说明]
-         ...
-   四、发明内容·技术效果要点：
-       - 总起句：[本发明提供了一种创新的技术解决方案...并取得了以下技术成果：]
-       - 效果条目（编号列举，与发明目的优势条目**标题相同、措辞不同**）：
-         （1）[效果标题1，与优势1相同]：[带来什么 + 量化结果说明]
-         （2）[效果标题2，与优势2相同]：[带来什么 + 量化结果说明]
-         ...
-       - 综述收尾句：[综上所述，本发明的技术解决方案...]
-   五、预计附图清单：
-       - 图1：[描述]
-       - 图2：[描述]
-       - ...
-   六、具体实施方式·步骤拆分：
-       - 步骤1：[标题]，简/繁=[简|繁]，预计子步骤数=[N]
-       - 步骤2：[标题]，简/繁=[简|繁]，预计子步骤数=[N]
-       - ...
-   七、术语锁定表：
-       - [学术术语A] → [专利术语A]（全文统一使用）
-       - [学术术语B] → [专利术语B]（全文统一使用）
-       - ...
-   八、篇幅预算（参考 [writing-rules.md](references/writing-rules.md) 的"篇幅参考表"）：
-       - 三、背景技术：~1000-1600 字
-       - 四·发明目的：~500-900 字
-       - 四·技术解决方案：~900-1400 字
-       - 四·技术效果：~700-1100 字
-       - 六、具体实施方式：~1200-3500 字
-       - 全文目标总字数：4500-7500 字
+   CNpatent 不再独立接受参考素材 + 领域的输入. 必须先通过 CNpatent-noveltycheck skill
+   做新颖性 + 创造性初筛, 获得绿灯后才能调用本 skill.
+
+   请运行 CNpatent-noveltycheck skill, 完成 Phase A → B → C 流程,
+   获得 5_verified_outline.md 后再调用 CNpatent.
    ```
 
-8. 向用户展示大纲，等待用户确认。**这是整个流程中唯一的用户确认点**，大纲确认后全部自动完成，不再询问用户。
+3. **文件存在 → 读入并做 schema 校验**：
 
-9. **确认后立即将大纲写入 `outputs/[专利名称]/01_outline.md`**，作为后续所有 Writer Agent 的统一输入源（断点重启时也从此文件读起）。
+   读 `5_verified_outline.md`. 必需字段（缺一即校验失败）：
+
+   - ▍主旨四段式（含四要素）
+   - 一、发明名称（≤25 字）
+   - 二、技术领域（1 句双层定位）
+   - 三、背景技术要点（含编号局限对应三方）
+   - 四·发明目的要点（含编号优势条目）
+   - 四·技术解决方案要点（含编号步骤）
+   - 四·技术效果要点（含编号效果条目，与优势标题一字不差）
+   - 五、预计附图清单（4-7 张）
+   - 六、具体实施方式·步骤拆分（含 Writer-C/D 分工）
+   - 七、术语锁定表（8-15 个核心术语）
+   - 八、篇幅预算
+   - 九、查新验证元信息（含 `novelty_verified: true` + 最接近现有技术 + 区别技术特征）
+
+   **三方对应硬约束**：背景局限 N = 优势条目 N = 效果条目 N，且（k）优势标题与（k）效果标题一字不差。
+
+   **校验失败**时在聊天窗口指出具体缺失的字段，建议用户回到 CNpatent-noveltycheck 修复，本次调用结束。
+
+4. **校验通过 → 复制内容到 `01_outline.md`**：
+
+   - 通过 `Read` + `Write` 把 `5_verified_outline.md` 的内容写入同目录的 `01_outline.md`
+   - **保留原 `5_verified_outline.md` 文件不动**（这是 noveltycheck 的审计产物）
+   - `01_outline.md` 是 CNpatent 后续所有 Writer agent 的统一输入源
+
+5. **跳过用户确认环节**：
+
+   大纲确认已在 CNpatent-noveltycheck Phase C 完成。CNpatent 不再询问用户。
+
+   在聊天窗口输出一句短确认：
+
+   ```
+   ✅ 接收 verified_outline 成功 (查新日期: YYYY-MM-DD, 最接近现有技术: #N).
+   进入 Phase 1 多 Writer 并行生成.
+   ```
+
+6. **立即进入 Phase 1**（无需等待用户任何回复）
+
+**设计原因**：前置 skill 已完成查新验证 + 领域迁移 + 大纲确认，CNpatent 专注于"大纲到 docx"的写作阶段。这样做的好处：
+
+- 防止写出实际上已被他人申请的专利
+- CNpatent 内部的多 Writer 并行 + Reviewer 审查架构**完全不变**
+- 如需改动大纲，用户回到 CNpatent-noveltycheck 重跑，而不是在 CNpatent 里改
 
 ### Phase 1：任务拆分与并行生成（自动执行）
 
