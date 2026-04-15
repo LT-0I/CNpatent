@@ -808,4 +808,85 @@ CNpatent Phase 1-6 保持不变。本 skill 仅在 Phase 0 入口插入一次检
 
 ---
 
-以上为 DESIGN.md 草稿 v1.0，等用户评审后修订。
+## 17. v1.1 架构升级（基于 2026-04-15 端到端测试反馈）
+
+本节是 v1.0 之后的增量。上面 §1-16 保留为 v1.0 历史快照（2026-04-14 起草，以下改动来自 2026-04-15 的 real dog-food 测试）。agent 文件和 SKILL.md 已按本节的说明实装，读者如发现 §1-16 与 agent 行为有冲突，**以本节为准**。
+
+### 17.1 动机
+
+Round 2 真实测试（`TEST_REPORT_2026-04-15.md`）揭示了两个关键事实：
+
+1. **Phase A 的 WebSearch 摘要存在 hallucination 风险**。VoxelMap 原论文完全没有 "anisotropic Gaussian" 字样，但 Phase A 的搜索结果摘要曾把它列为命中事实，误导了创造性预判。靠单轮 WebSearch 摘要做判断会被这类幻觉污染。
+2. **AI 有能力自主全文精读公开资源**。Round 2 的关键转折是 AI 对 VoxelMap / D²-LIO / LiLi-OM / Surfel-LIO 做了全文精读，同时对 LIO-Livox 做了 git clone 源码精读。这些工作在 v1.0 被假设成"用户必须亲自做的付费库人工检索工作"——实际上 AI 在 Phase B 阶段完全可以独立执行。
+
+v1.0 的 Phase B 定位是"用户在付费库的作业指导书"，隐含假设所有信息检索和精读都只能由用户完成。这个假设对公开资源（arXiv 全文 / GitHub 源码）是严重低估 AI 的实际能力；对真正的付费资源（incoPat 抵触申请 / CNKI 中文学位论文）则依然成立。
+
+### 17.2 Phase B 两阶段改造
+
+把 Phase B 拆成两个子阶段：
+
+**Phase B.1 —— AI 自动精读公开资源（必做，AI 执行，无需用户在场）**
+
+Guide agent 为 Phase A 的 Top 5-10 命中分别生成一张"AI 精读卡片"，卡片内容是对该命中的具体精读任务：
+- 摘要-全文交叉核实卡（**所有 Top 命中必做**，修复 Issue 6 的 WebSearch hallucination 风险）
+- arXiv 全文精读卡（命中是论文时）
+- GitHub 源码精读卡（命中是开源项目时）
+
+卡片由 orchestrator 在 B.1 阶段派发给 `subagent_type="general-purpose"` 的子 agent 执行（模型 sonnet，不需要 opus）。执行结果直接写入 `4_manual_search_template.md` 的"命中 #N · B.1 全文核实"字段。
+
+**产物预期**：Phase A 的疑似命中被升级为"原文锚定 / 源码锚定"或"Phase A 摘要 hallucination，不采信"。两种结论都比单轮 WebSearch 摘要可信。
+
+**Phase B.2 —— 用户人工付费库（必做，用户执行）**
+
+v1.0 原有的 incoPat + 抵触申请 + CNKI 工作流**不变**。这是 AI 无法做的工作：
+- incoPat 的 Boolean / IPC 精确检索和语义检索需要登录态
+- incoPat 的抵触申请（未公开申请）检索是本 skill v1.0 的独特价值
+- CNKI 的中文学位论文 + 会议论文覆盖是 Scholar / arXiv 替代不了的
+
+**Phase B.3 —— 合并进 Phase C**
+
+两个子阶段的产物都落到同一个 `4_manual_search_template.md`，Phase C Judge 读 template 时不需要区分来源，按命中类型（专利 / 论文 / 源码）做新颖性和创造性判断。v1.0 的 Judge 判断逻辑（§9）完全不需要改。
+
+### 17.3 Issue 4 — 发明名称英文品牌词硬规则
+
+测试中 "一种 LIO-Livox..." 的 Livox 是 DJI 旗下的品牌，4 个 Writer 全部原样沿用，Phase 0 也没拦截。品牌词在权利要求书阶段会破坏保护范围（专利保护技术方案本身，不能依赖特定品牌），且易引起商标争议。
+
+**两层防御**：
+
+- `agents/cnpatent-noveltycheck-screener.md` 步骤 10 的硬约束列表加一条：发明名称不得含英文品牌词。正则: 连续 3 个以上 ASCII 字母视为英文词，通用术语缩写（SLAM / LIDAR / GPS / UAV / CPU / GPU / ARM 等）在白名单内。
+- `agents/cnpatent-noveltycheck-judge.md` 在写入 `5_verified_outline.md` 前对发明名称做复校验，发现品牌词 → 用功能性描述替换（如 "Livox 激光雷达" → "非重复扫描固态激光雷达"），并在绿灯触发提示里告知用户。
+
+### 17.4 对文件的影响
+
+| 文件 | 改动 |
+|---|---|
+| `SKILL.md` Phase B 节 | 描述改成两阶段（B.1 AI + B.2 用户），添加 Phase B.1 的执行协议 |
+| `agents/cnpatent-noveltycheck-guide.md` | 插入一步"生成 Phase B.1 AI 精读卡片"；现有 incoPat / CNKI 卡片步骤归入 Phase B.2 大节；时间预算表增加"执行者"列区分 AI 和用户；详细卡片模板下沉到 `references/phase-b1-ai-read-cards.md` |
+| `agents/cnpatent-noveltycheck-screener.md` | 步骤 10 硬约束列表加发明名称品牌词禁令 + Anti-pattern 新增一条 |
+| `agents/cnpatent-noveltycheck-judge.md` | 插入新步骤 8 "发明名称复校验"，原步骤 8 顺延为步骤 9 |
+| `references/phase-b1-ai-read-cards.md` | 新增。三种 B.1 卡片模板 + 回填字段 schema + 派发协议 + Anti-patterns |
+
+### 17.5 向后兼容
+
+v1.1 的改动没有破坏性：
+
+- `user_profile.yml` schema **不变**
+- `5_verified_outline.md` schema **不变**（九、查新验证元信息的字段集合一致）
+- `4_manual_search_template.md` **追加**"B.1 全文核实"字段，原有的 B.2 用户填写字段位置不动，用户仍可在同一张表里填写
+- CNpatent skill 不需要任何改动（v1.1 仅影响 noveltycheck skill，不影响下游写作 skill）
+
+Phase C Judge 的判断逻辑完全兼容：B.1 产物只是让命中的"是/否/部分"判定多了一层原文锚定依据，不改变判据本身。
+
+### 17.6 未覆盖
+
+v1.1 仍未解决的已知问题（继续延后）：
+
+- **红灯路径没测**：mock 一份 Judge 判定"区别特征在最接近现有技术里全命中"的数据做红灯 smoke test
+- **Phase 0 校验失败路径没测**：删除 `5_verified_outline.md` 里的"九、查新验证元信息"字段，验证 CNpatent 拒绝执行的分支
+- **Writer 额度降级**（Issue 2）：4 Writer 并行用 opus 时撞限额的降级策略暂不处理
+
+下一次 round 3 端到端测试建议用**不同领域的论文**（非 SLAM/UAV），验证 v1.1 的 B.1 + 品牌词拦截不会在新领域回归。
+
+---
+
+以上为 DESIGN.md 草稿 v1.0 + v1.1 补丁。v1.0 章节（§1-16）保留作为历史快照；v1.1 章节（§17）是当前实装版本的权威说明。

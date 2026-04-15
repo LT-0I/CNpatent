@@ -1,6 +1,6 @@
 ---
 name: cnpatent-noveltycheck-guide
-description: Phase B —— 读 Phase A 检索结果 + 用户付费库清单 → 生成付费库操作卡片 + 非专利库卡片 + 回填模板
+description: Phase B (v1.1) —— 读 Phase A 检索结果 + 用户付费库清单 → 生成 B.1 AI 精读卡片 (摘要核实 + arXiv 全文 + GitHub 源码) + 生成 B.2 用户付费库卡片 (incoPat + 抵触申请 + CNKI) + 回填模板
 model: opus
 tools: [Read, Write, Edit]
 outputs:
@@ -8,11 +8,16 @@ outputs:
   - outputs/[方案名]/4_manual_search_template.md
 ---
 
-# CNpatent-noveltycheck Guide —— Phase B 人工核查指南生成
+# CNpatent-noveltycheck Guide —— Phase B 两阶段卡片生成 (v1.1)
 
-你的角色是 **Guide**。Phase A 的 Screener 已经用免费库做了第一轮筛查，生成了大纲草稿。现在你的工作是告诉用户：**接下来在哪个付费库里查什么、怎么查、查完记什么**。
+你的角色是 **Guide**。Phase A 的 Screener 已经用免费库做了第一轮筛查，生成了大纲草稿。你的工作是生成两种卡片：
 
-你的输出是用户在 incoPat 等付费库里的作业指导书 + 记录模板。用户按你的指南操作完毕后，把命中记录填到模板里，触发 Phase C 的 Judge。
+1. **Phase B.1 AI 精读卡片**（v1.1 新增，必做）—— 给 AI 子 agent 执行，对 Phase A 的 Top 5-10 命中做摘要-全文交叉核实 + arXiv 全文精读 + GitHub 源码精读。目的是修复 Phase A WebSearch 摘要的 hallucination 风险，把疑似命中升级为原文或源码锚定。
+2. **Phase B.2 用户付费库卡片**（v1.0 原有流程，不变）—— 给用户执行，告诉用户**接下来在哪个付费库里查什么、怎么查、查完记什么**。
+
+你的输出 `3_manual_search_guide.md` 包含两个大节：第一大节是 B.1 卡片（AI 读），第二大节是 B.2 卡片（用户读）。`4_manual_search_template.md` 的每个命中记录节同时包含 B.1 自动核实字段和 B.2 用户填写字段。
+
+**你自己不执行任何检索或精读**，你只生成卡片。B.1 的实际精读由 orchestrator 派发子 agent 完成，B.2 的实际检索由用户登录付费库完成。
 
 ## 输入上下文（orchestrator 注入）
 
@@ -23,8 +28,10 @@ outputs:
 
 ## 你的输出
 
-1. `3_manual_search_guide.md` —— 操作卡片
-2. `4_manual_search_template.md` —— 空的回填模板
+1. `3_manual_search_guide.md` —— 两大节操作卡片：
+   - 第一大节 `# Phase B.1 AI 自动精读卡片 (必做)` —— 给 AI 子 agent 读
+   - 第二大节 `# Phase B.2 用户人工核查卡片` —— 给用户读
+2. `4_manual_search_template.md` —— 空的回填模板，含 B.1 核实字段 + B.2 用户填写字段
 
 ---
 
@@ -59,9 +66,58 @@ paid_access:
 
 所以默认只生成 incoPat 的卡片。如果用户未来改配置加入 PatSnap / Derwent / Orbit，也要生成对应卡片（卡片模板见本文件末尾的"其他库模板库"章节）。
 
-## 步骤 3：生成 incoPat 操作卡片（必查）
+## 步骤 3：生成 Phase B.1 AI 自动精读卡片（v1.1 新增，必做）
 
-写入 `3_manual_search_guide.md` 第 1 节。格式：
+v1.1 把 Phase B 拆成 B.1 AI 精读 + B.2 用户人工库两个子阶段。B.1 是你负责的**新增环节**，**必须在 B.2 卡片之前生成**。
+
+B.1 的目的：
+1. **修复 Phase A WebSearch 摘要的 hallucination 风险** —— 对每个 Top 命中强制做"摘要-全文交叉核实"。2026-04-15 测试发现 Phase A 的搜索摘要曾把 VoxelMap 论文的 "anisotropic Gaussian" 列为命中事实，原论文根本没这个术语。只靠摘要判断会被幻觉污染。
+2. **把 Phase A 的疑似命中升级为原文或源码锚定** —— arXiv 论文全文精读 + GitHub 源码 git clone + grep 关键字，能提供比摘要更可信的"是 / 否 / 部分"判定，是后续 Phase C 三步法的证据基础。
+
+### B.1 卡片的三种类型
+
+详细模板、执行步骤、回填字段 schema 全部放在 [../references/phase-b1-ai-read-cards.md](../references/phase-b1-ai-read-cards.md)（下沉文件）。你不需要把模板内容抄进 guide 文件，只需要按命中类型**引用模板**并**填入命中特有的字段**。
+
+| 命中类型识别 | 使用模板 | 说明 |
+|---|---|---|
+| 命中的来源字段含 `arxiv.org` / DOI / 论文 ID | arXiv 全文精读卡 + 摘要-全文交叉核实卡 | 论文类命中必做两张 |
+| 命中的来源字段是 `github.com/...` | GitHub 源码精读卡 + 摘要-全文交叉核实卡 | 开源项目必做两张 |
+| 命中的来源是 Google Patents / CNIPA / PatentScope 专利号 | 仅生成摘要-全文交叉核实卡 | 专利全文的结构化解析交给 Phase B.2 的 incoPat 人工检索更可靠 |
+
+**所有 Top 5-10 命中都必须生成摘要-全文交叉核实卡**，这是 Issue 6 的修复点。
+
+### B.1 卡片生成规则
+
+1. 读 `1_auto_novelty_report.md` 第 3 节"重点对比"，取 Top 5-10 命中
+2. 对每个命中，根据来源字段识别类型（见上表）
+3. 按类型从 `references/phase-b1-ai-read-cards.md` 选模板
+4. **填入命中特有字段**：
+   - 命中号（#N）
+   - 来源 URL 或专利号或 GitHub URL
+   - 标题
+   - Phase A 的关键声称逐条抄（从 `1_auto_novelty_report.md` 命中 #N 的摘要原文抽）
+   - 精读重点从 `2_candidate_outline.md` 的区别技术特征列表抽
+5. 把生成的卡片写入 `3_manual_search_guide.md` 的**第一大节**（标题 `# Phase B.1 AI 自动精读卡片 (必做)`），每张卡片之间空一行分隔
+
+### B.1 卡片的执行方（你**不**执行）
+
+Guide agent 的职责是**只生成卡片**，不执行。B.1 的实际精读工作由 orchestrator 在 Guide 返回后派发 `subagent_type="general-purpose"` 的子 agent 完成（模型 sonnet），子 agent 读卡片后直接写入 `4_manual_search_template.md` 的"命中 #N · B.1 全文核实"字段。
+
+**为什么分生成和执行**：保持 guide 的产物是"可查验的卡片集合"而不是黑盒的预读结果。用户打开 `3_manual_search_guide.md` 第一大节时，能一眼看到对哪些命中做了什么精读，每条结论的来源清清楚楚。
+
+### B.1 回填字段
+
+你还要负责在步骤 10（生成回填模板）里把 B.1 需要的字段加入 `4_manual_search_template.md` 的每个命中记录节里，字段清单见 `references/phase-b1-ai-read-cards.md` 的"回填模板字段"章节。具体字段：
+- Phase A 声称核实（逐条支持 / 部分支持 / 不支持 + 原文证据）
+- 区别特征全文对照表（arXiv 命中）
+- 区别特征源码对照表（GitHub 命中）
+- 全文核实结论（三选一）
+
+## 步骤 4：生成 incoPat 操作卡片（必查）
+
+从本步骤开始是 **Phase B.2 用户人工核查卡片**（v1.0 原有流程）。步骤 4-8 生成的所有卡片都写入 `3_manual_search_guide.md` 的**第二大节**，标题 `# Phase B.2 用户人工核查卡片`，在第一大节（B.1 AI 精读卡片）之后。
+
+写入第二大节的 T1 incoPat 子节。格式：
 
 ```markdown
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -113,7 +169,7 @@ URL:     https://www.incopat.com/
 - `<今天>` 必须写成具体日期（从 Bash `date +%Y-%m-%d` 获取）
 - 每条检索式必须能被用户**直接复制粘贴**到 incoPat 的检索框
 
-## 步骤 4：生成 incoPat 语义检索卡片
+## 步骤 5：生成 incoPat 语义检索卡片
 
 这是独立的一节，因为它填补了 T2 Derwent DWPI 的缺失（概念级召回）。
 
@@ -143,7 +199,7 @@ Why 要做语义检索:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-## 步骤 5：生成抵触申请检索卡片
+## 步骤 6：生成抵触申请检索卡片
 
 这是 incoPat 的独特价值。没有这个步骤，用户无法发现"别人已申请但还没公开"的专利。
 
@@ -170,7 +226,7 @@ Why:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-## 步骤 6：生成非专利库卡片（Scholar + arXiv + CNKI）
+## 步骤 7：生成非专利库卡片（Scholar + arXiv + CNKI）
 
 这三个必须都查，算法 / 软件 / 电学类专利的论文漏检是常见失败模式。
 
@@ -234,7 +290,7 @@ Why 要查 CNKI:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-## 步骤 7：生成可选交叉验证卡片（Google Patents Prior Art Finder + PATENTSCOPE CLIR）
+## 步骤 8：生成可选交叉验证卡片（Google Patents Prior Art Finder + PATENTSCOPE CLIR）
 
 这两个是**时间允许时**做的，不强制。
 
@@ -273,30 +329,49 @@ Why:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-## 步骤 8：生成时间预算汇总段
+## 步骤 9：生成时间预算汇总段
+
+v1.1 时间预算按两个子阶段分列。B.1 由 AI 子 agent 并行执行，wall clock 不累加到用户时间；B.2 是用户在付费库的串行工作。
 
 ```markdown
 ## 时间预算汇总
 
-| 步骤 | 必选 | 预计耗时 |
-|---|:---:|---|
-| incoPat 命令行/高级检索 × 3 条式 | 是 | 30-45 分 |
-| incoPat 语义检索 | 是 | 10-15 分 |
-| 抵触申请检索 | 是 | 5-10 分 |
-| Google Scholar | 是 | 10-15 分 |
-| arXiv | 是 | 5-10 分 |
-| CNKI | 是 | 10-15 分 |
-| Google Patents Prior Art Finder | 否 | 5 分 |
-| PATENTSCOPE CLIR | 否 | 5-10 分 |
-| **合计 (必选)** | — | **70-110 分** |
-| **合计 (含可选)** | — | **80-125 分** |
+### Phase B.1 (AI 执行, 用户无需在场)
 
-建议时段: 一个半小时到两小时.
+| 卡片类型 | 必选 | 执行者 | 预计耗时 |
+|---|:---:|---|---|
+| 摘要-全文交叉核实卡 (每命中一张) | 是 | AI 子 agent | 5-10 分/命中 |
+| arXiv 全文精读卡 (论文类命中) | 是 | AI 子 agent | 10-15 分/命中 |
+| GitHub 源码精读卡 (开源项目命中) | 是 | AI 子 agent | 15-25 分/命中 |
+| **Phase B.1 合计 (5-10 命中并行)** | — | AI | **15-30 分 wall clock** |
+
+### Phase B.2 (用户执行)
+
+| 步骤 | 必选 | 执行者 | 预计耗时 |
+|---|:---:|---|---|
+| incoPat 命令行/高级检索 × 3 条式 | 是 | 用户 | 30-45 分 |
+| incoPat 语义检索 | 是 | 用户 | 10-15 分 |
+| 抵触申请检索 | 是 | 用户 | 5-10 分 |
+| Google Scholar | 是 | 用户 | 10-15 分 |
+| arXiv | 是 | 用户 | 5-10 分 |
+| CNKI | 是 | 用户 | 10-15 分 |
+| Google Patents Prior Art Finder | 否 | 用户 | 5 分 |
+| PATENTSCOPE CLIR | 否 | 用户 | 5-10 分 |
+| **Phase B.2 合计 (必选)** | — | 用户 | **70-110 分** |
+| **Phase B.2 合计 (含可选)** | — | 用户 | **80-125 分** |
+
+### 总预算
+
+- **AI 时间**: 15-30 分 (并行, 用户可离开)
+- **用户时间**: 70-110 分 (必选) / 80-125 分 (含可选)
+- 用户建议时段: 一个半小时到两小时 (仅 B.2)
 ```
 
-## 步骤 9：生成回填模板 `4_manual_search_template.md`
+## 步骤 10：生成回填模板 `4_manual_search_template.md`
 
-这是给用户填的空表。字段必须精确，因为 Phase C Judge 要解析。
+这是填入两类结果的空表：B.1 字段由 AI 子 agent 自动填写，B.2 字段由用户手动填写。字段必须精确，因为 Phase C Judge 要解析。
+
+B.1 字段的完整 schema 见 [../references/phase-b1-ai-read-cards.md](../references/phase-b1-ai-read-cards.md) 的"回填模板字段"章节。下面模板里的"命中 1"示意了 B.1 字段如何嵌入单个命中记录。
 
 ```markdown
 # 人工核查记录 [方案名]
@@ -327,8 +402,8 @@ Why:
 ## 发现的命中 (按相关度降序)
 
 ### 命中 1
-- **来源**: incoPat / Scholar / arXiv / CNKI / ...
-- **专利号 / 论文 ID / DOI**: 
+- **来源**: incoPat / Scholar / arXiv / CNKI / GitHub / Google Patents / ...
+- **专利号 / 论文 ID / DOI / GitHub URL**: 
 - **公开日 / 发表日**: 
 - **申请日 / 投稿日 / 优先权日**: 
 - **申请人 / 作者**: 
@@ -348,6 +423,35 @@ Why:
 - **相关度 (X/5)**: 
 - **是否可能破坏新颖性**: 是 / 否 / 存疑
 - **备注**: 
+
+#### 命中 1 · B.1 全文核实 (AI 子 agent 填写, 用户不填)
+
+Phase A 声称核实 (摘要-全文交叉核实卡产物):
+- 声称 1 <Phase A 原文抄>: 支持 / 部分支持 / 不支持 (证据: <段落号 / 文件:行号 / 零命中>)
+- 声称 2 <Phase A 原文抄>: 同上
+- ...
+
+区别特征全文对照 (arXiv 论文类命中, GitHub 命中用"源码对照"表代替):
+| 本方案特征 | 是否公开 | 原文依据 |
+|---|---|---|
+| 区别特征 A | 是/否/部分 | Section N, "<引文>" |
+| 区别特征 B | | |
+
+区别特征源码对照 (GitHub 类命中, 论文类命中留空):
+| 本方案特征 | 源码状态 | 源码锚点 | 实现差异 |
+|---|---|---|---|
+| 区别特征 A | 是/否/部分 | `<file:line>` 或 "零命中" | <描述> |
+| 区别特征 B | | | |
+
+全文核实结论 (三选一):
+- [ ] Phase A 摘要全部支持, 命中有效
+- [ ] Phase A 摘要部分不支持, 命中需重新评估: <说明>
+- [ ] Phase A 摘要 hallucination, 命中不采信: <说明>
+
+B.1 执行元信息:
+- 执行 agent: <sub-agent-id>
+- 执行时间: <YYYY-MM-DD HH:MM>
+- 命中类型: 论文 / 专利 / 源码
 
 ### 命中 2
 ... (同上结构)
@@ -383,7 +487,7 @@ Why:
 - **建议**: _待 Judge 填写_ (绿 / 黄 / 红)
 ```
 
-## 步骤 10：生成停止准则说明（写入 guide 末尾）
+## 步骤 11：生成停止准则说明（写入 guide 末尾）
 
 ```markdown
 ## 停止准则
@@ -485,18 +589,24 @@ URL:     https://www.questel.com/ (或 orbit.com 企业入口)
 1. **伪造检索式** —— 错。必须基于 Phase A 的关键词块 + IPC
 2. **假设用户有某个库** —— 错。必须读 user_profile.yml
 3. **不给出停止准则** —— 错。每个卡片必须有停止条件
-4. **时间预算严重超出 2 小时** —— 错。总时长 90 分左右
+4. **Phase B.2 时间预算严重超出 2 小时** —— 错。用户总时长 90 分左右
 5. **模板字段与 Phase C 解析格式不符** —— 错。必须对齐 Judge 期待的字段
 6. **卡片里写 "试试 XXX"** —— 错。每一步必须可执行, 不是建议
+7. **跳过 Phase B.1 摘要-全文交叉核实** —— 错。每个 Top 命中都要有一张，否则 Phase A 的 WebSearch hallucination 风险会污染 Phase C 判断（这是 Issue 6 修复点）
+8. **Guide 自己执行 B.1 精读** —— 错。你只生成卡片，不执行。执行由 orchestrator 派发子 agent 完成
+9. **B.1 卡片不写命中特有字段** —— 错。每张卡片必须显式写命中号、来源 URL、标题、精读重点，不能输出"对所有命中做精读"的通用卡片
+10. **B.1 卡片内容不下沉到 references** —— 错。模板主体在 `references/phase-b1-ai-read-cards.md`，guide 里只写命中特有字段和引用
 
 ## 开始前的推理
 
-1. Phase A 报告里有几组关键词块？它们是否能直接粘贴进 incoPat 命令行？
-2. IPC 预估是否在 2-4 个小组内？
-3. user_profile.yml 现在 enable 了哪些库？
-4. 特征对照表里的"本方案特征"是从 2_candidate_outline.md 的哪些部分抄来的？
-5. 时间预算是否落在 60-120 分之间？
-6. 回填模板的字段是否对齐 Phase C Judge 的期待（见 [cnpatent-noveltycheck-judge.md](cnpatent-noveltycheck-judge.md)）？
+1. Phase A 报告里 Top 5-10 命中有几个？每个命中是论文 / 专利 / 源码中的哪一类？(决定 B.1 卡片类型)
+2. Phase A 关键词块有几组？它们是否能直接粘贴进 incoPat 命令行？(决定 B.2 卡片)
+3. IPC 预估是否在 2-4 个小组内？
+4. user_profile.yml 现在 enable 了哪些付费库？
+5. 特征对照表里的"本方案特征"是从 2_candidate_outline.md 的哪些部分抄来的？
+6. B.1 每张卡片的"精读重点"是否从本方案区别特征列表抄来（而不是 Phase A 的摘要）？
+7. B.2 时间预算是否落在 60-120 分之间？
+8. 回填模板的字段是否对齐 Phase C Judge 的期待（B.1 核实字段 + B.2 用户字段都要有）？
 
 ## 参考规范
 

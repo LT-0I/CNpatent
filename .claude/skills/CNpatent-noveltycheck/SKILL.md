@@ -137,50 +137,72 @@ outputs/[方案名]/
 - 每个特征对比必须可追溯到原文段落
 - 如 Phase A 已发现破坏新颖性的命中，Screener 可直接建议走红灯，跳过 Phase B/C
 
-### Phase B — 人工核查指南生成
+### Phase B — 两阶段核查（v1.1：B.1 AI 精读 + B.2 用户付费库）
+
+v1.1 把 Phase B 拆成两个子阶段。背景、动机和完整设计见 [DESIGN.md §17](DESIGN.md)。
+
+**Phase B.1 —— AI 自动精读公开资源**（必做，AI 执行，用户无需在场）
+
+对 Phase A 的 Top 5-10 命中，由 Guide agent 生成 AI 精读卡片，orchestrator 随后派发 `subagent_type="general-purpose"` 的子 agent 并行执行：
+
+- **摘要-全文交叉核实卡**（所有 Top 命中必做）—— 核实 Phase A WebSearch 返回的摘要是否与原文一致，防止 hallucination 传染后续 Judge 判断
+- **arXiv 全文精读卡** —— 命中是 arXiv / openaccess 论文时生成
+- **GitHub 源码精读卡** —— 命中是 GitHub 开源项目时生成
+
+精读产物直接写入 `4_manual_search_template.md` 的"命中 #N · B.1 全文核实"字段。
+
+**Phase B.2 —— 用户人工付费库**（必做，用户执行）
+
+v1.0 原有的 incoPat 检索 + 抵触申请检索 + CNKI 中文学位论文工作流**不变**。这是 AI 无法做的工作（incoPat 需要登录态，CNKI 同样）。
 
 **Agent**：`cnpatent-noveltycheck-guide`（角色文件 [agents/cnpatent-noveltycheck-guide.md](agents/cnpatent-noveltycheck-guide.md)）
 
-**模型**：opus
+**模型**：opus（Guide 本身）+ sonnet（B.1 子 agent，结构化精读不需要 opus）
 
 **输出文件**：
 
 ```
 outputs/[方案名]/
-├── 3_manual_search_guide.md      # 操作卡片（分层 + 每库具体步骤）
-└── 4_manual_search_template.md   # 空回填模板
+├── 3_manual_search_guide.md      # 第一大节 Phase B.1 卡片 + 第二大节 Phase B.2 卡片
+└── 4_manual_search_template.md   # 含 B.1 全文核实字段 + B.2 用户填写字段
 ```
 
 **步骤**：
 
 1. 读 `1_auto_novelty_report.md` 提取关键词块 + IPC
 2. 读 `user_profile.yml` 获取用户付费库访问清单
-3. 为每个可访问的库生成操作卡片（URL / 登录方式 / 检索式 / 字段代码 / 步骤 / 停止准则）
-4. 生成非专利库操作卡片（Google Scholar + arXiv + CNKI）
-5. 生成回填模板（命中记录表 + 结论段）
+3. **Phase B.1 卡片生成**：为 Top 5-10 命中生成 AI 精读卡片（卡片模板和派发协议见 [references/phase-b1-ai-read-cards.md](references/phase-b1-ai-read-cards.md)）
+4. **Phase B.2 卡片生成**：为每个可访问的付费库生成用户操作卡片（URL / 登录方式 / 检索式 / 字段代码 / 步骤 / 停止准则）
+5. 生成非专利库操作卡片（Google Scholar + arXiv + CNKI），归入 B.2
+6. 生成回填模板，同时包含 B.1 核实字段和 B.2 用户填写字段
 
-**约束**：
+**orchestrator 在 Phase B.1 的执行协议**：Guide agent 返回后，orchestrator 读 `3_manual_search_guide.md` 的第一大节，对每张 B.1 卡片 `Agent` 工具派发一个子 agent（最多 10 张卡片并行），子 agent 执行后把结果写入 `4_manual_search_template.md` 的对应字段。Phase B.1 总耗时约 15-30 分钟 wall clock（并行）。完成后才进入 B.2 的"人类工作时段"提示。
+
+**约束**（不变）：
 - 检索式必须基于 Phase A 的关键词块 + IPC 构造，不得凭空编造
-- 总时间预算 60-90 分钟
 - 每个卡片必须给出停止准则
 - 回填模板的字段必须对齐 Phase C judge 的解析格式
+- B.1 子 agent 的精读结果必须附原文段落号或源码路径行号，无锚点的判定不被 Phase C Judge 采信
 
-### ⏸ 人类工作时段
+### ⏸ 人类工作时段（仅 Phase B.2）
 
-Phase B 输出后，skill **必须停下**，在聊天窗口输出类似以下提示：
+Phase B.1 执行完毕后，B.2 卡片已在 `3_manual_search_guide.md` 第二大节就绪。skill **必须停下**，在聊天窗口输出类似以下提示：
 
 ```
-✅ Phase B 完成。请按以下步骤在外部数据库完成人工核查：
+✅ Phase B.1 完成（AI 精读）。Phase B.2 需要你在付费库手动完成：
 
-1. 打开 outputs/[方案名]/3_manual_search_guide.md，按操作卡片执行
-2. 将命中记录填入 outputs/[方案名]/4_manual_search_template.md
-3. 预计耗时 60-90 分钟
-4. 完成后告诉我 "查新完成" 或 "人工核查完成"，我会继续 Phase C
+1. 打开 outputs/[方案名]/3_manual_search_guide.md，查看第二大节 "Phase B.2 用户人工库卡片"
+2. 按 incoPat / CNKI 操作卡片执行检索
+3. 将命中记录填入 outputs/[方案名]/4_manual_search_template.md 的 B.2 字段
+4. 预计耗时 60-90 分钟
+5. 完成后告诉我 "查新完成" 或 "人工核查完成"，我会继续 Phase C
+
+**B.1 已经自动完成**，具体见 template 的 B.1 字段。你可以先看一眼 B.1 结果对 Phase A 的疑似命中做了哪些核实或证伪。
 
 **请不要关闭当前会话** —— 但如果关了也没关系，回来后 skill 会从工作目录状态续跑。
 ```
 
-然后 skill 本次调用结束。**不要**自动进 Phase C（此时 4_manual_search_template.md 还没被填好，Phase C 没有输入）。
+然后 skill 本次调用结束。**不要**自动进 Phase C（此时 B.2 字段还没被填好，Phase C 输入不完整）。
 
 ### Phase C — 结果分析 + 决策
 
