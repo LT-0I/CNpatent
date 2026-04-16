@@ -1,0 +1,26 @@
+# Only track .claude/ and README.md
+# Ignore everything else by default
+*
+
+# Allow .claude/ tree
+!.claude/
+!.claude/**
+
+# Allow README
+!README.md
+
+# Allow this gitignore itself
+!.gitignore
+
+# Always ignore inside .claude/
+.claude/skills/*/scripts/__pycache__/
+.claude/worktrees/
+
+# Test and build artifacts
+outputs/
+*.pdf
+TEST_REPORT_*.md
+assemble_docx.py
+
+# OMC state
+.omc/
