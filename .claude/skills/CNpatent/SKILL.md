@@ -332,7 +332,7 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 **落盘策略**：Reviewer 的所有修改直接写回 `sections/*.md`（in-place 编辑）。**不保留任何审查中间文件**：审查报告、问题清单、Writer 退回轮次、人类化润色前/后对比都仅以 Reviewer 在聊天窗口的简要总结呈现，不落盘。调用 `CNpatent-humanizer` skill 时也是对 sections 文件就地处理。
 
-**Why**：按照"工作目录只保留 DOCX 写入前的最终态"的设计原则，审查/润色过程产物属于"过程态"，不应留在工作目录里污染编辑视图。如需精确的变更追溯，建议用户在 `outputs/[专利名称]/` 下做 `git init` 自行管理（详见后文【工作目录与断点重启机制】）。
+**Why**：按照"工作目录只保留 DOCX 写入前的最终态"的设计原则，审查/润色过程产物属于"过程态"，不应留在工作目录里污染编辑视图。如需精确的变更追溯，建议用户在 `outputs/[专利名称]/` 下做 `git init` 自行管理（详见后文【工作目录与修改工作流】）。
 
 ### Phase 3：兜底清理与 DOCX 写入（自动执行）
 
@@ -432,10 +432,10 @@ if report.changed:
 
 ---
 
-## 工作目录与断点重启机制
+## 工作目录与修改工作流
 
 工作目录 `outputs/[专利名称]/` **只保留两类文件**：
-1. `01_outline.md` —— Phase 0 用户确认的大纲（断点重启时从此读起）
+1. `01_outline.md` —— Phase 0 用户确认的大纲（修改工作流从此读起）
 2. `sections/*.md` —— 8 个章节文件，DOCX 写入前的最终文本（用户可直接编辑）
 
 **设计原则**：审查报告、Writer 原始草稿、人类化润色前/后对比等"过程产物"一律不落盘。修改场景下用户只需要最终态；过程态由 Reviewer 在聊天窗口的总结承载，如需精确变更追溯由用户用 git 自行管理。
@@ -462,24 +462,22 @@ outputs/[专利名称]/
 
 **Why 第六节合一**：六节虽然由 Writer-C 和 Writer-D 并行写就，但用户视角的"六节"是一个整体——把并行细节藏在 orchestrator 内部（详见 Phase 1 的 `_part_six_*.md` 临时机制），用户在 sections/ 看到的就是 `6_implementation.md` 一个文件。
 
-### 断点重启与局部修改
+### 修改工作流（Revision Workflow）
 
-只有两种修改场景：
+DOCX 交付后用户提出自然语言修改意见时，执行以下流程。完整协议（4 级分类标准、路由决策树、Writer 重调用上下文模板、Reviewer 轮次重置规则、反模式清单）见 [references/revision-workflow.md](references/revision-workflow.md)。
 
-| 用户意见涉及 | 修改的文件 | 需要重跑的阶段 |
+**4 级分类与路由（概览）**：
+
+| 级别 | 判定标准 | 执行者 |
 |---|---|---|
-| 大纲结构、技术路线、术语命名 | `01_outline.md` | Phase 1 → Phase 2 → Phase 3（覆盖整个 sections/） |
-| 任意章节的内容/段落/术语 | 直接编辑对应 `sections/*.md` | 仅 Phase 3（清理 + DOCX 写入 + Phase 4 验证）|
-| 附图增删/重编号 | 现有 DOCX | Phase 6（不动 sections/） |
+| 微调 | 无语义变化：数值/措辞/格式 | Orchestrator 直接 Edit sections/*.md |
+| 段落 | 1-3 段语义变化 | 路由到对应 Writer（含修改上下文） |
+| 章节 | 整节重写/重组 | 路由到对应 Writer（全节重写） |
+| 大纲 | 技术路线变更、多节联动 | 警告新颖性影响 → 用户确认 → 修改 01_outline.md → Phase 1 重启 |
 
-**用户提意见的方式**：直接告诉 Skill"我编辑了 4b_solution.md，请重新生成 DOCX"——Skill 收到后只跑 Phase 3 即可，无需重跑 Writer/Reviewer。
+**所有级别完成后**：→ Phase 2（Reviewer，轮次计数器重置为 0）→ Phase 3（DOCX）→ Phase 4（验证）
 
-**版本管理建议**：sections/ 是一个普通目录，建议用户在 `outputs/[专利名称]/` 下做 `git init`，每次修改前 commit 一次。这样：
-- 想看 Reviewer 改了什么 → `git diff sections/`
-- 想回滚 → `git checkout sections/`
-- 想看历史版本 → `git log`
-
-无需 Skill 内置版本号机制（不再有 `_v2` 后缀）。
+**版本管理建议**：建议用户在 `outputs/[专利名称]/` 下做 `git init`，修改前 commit 一次，便于回滚和 diff。无需 Skill 内置版本号机制。
 
 ---
 
