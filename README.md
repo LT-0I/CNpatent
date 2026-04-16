@@ -1,6 +1,37 @@
-# Patent Generator — 开箱即用的 Claude Code 中国专利生成器
+# CNpatent — 中国发明专利技术交底书自动生成器
 
-一个基于 Claude Code 的中国发明专利技术交底书自动生成工具。提供参考素材和目标应用领域，即可一键生成符合 CNIPA 规范的完整专利技术交底书（.docx）。
+基于 Claude Code 的中国发明专利技术交底书（.docx）自动生成工具。提供参考素材和目标应用领域，经新颖性 + 创造性初筛后，自动生成符合 CNIPA 规范的完整交底书。
+
+## Skill 家族
+
+本仓库包含 3 个协作的 Claude Code Skill，形成一条完整的专利生成流水线：
+
+```
+CNpatent-noveltycheck (唯一入口)
+  Phase A  自动免费库筛查 + 大纲生成
+  Phase B  B.1 AI 自动精读公开资源 + B.2 用户人工付费库核查
+  Phase C  三步法创造性判断 + 三色灯决策
+      |
+      | 绿灯 → 5_verified_outline.md
+      v
+CNpatent (下游写作)
+  Phase 0  接收 verified_outline
+  Phase 1  4 Writer 并行生成 (opus)
+  Phase 2  Reviewer 审查 + CNpatent-humanizer 润色
+  Phase 3  兜底清理 + 公式重编号 + DOCX 写入
+  Phase 4  DOCX 验证
+  Phase 5  防幻觉 AI 附图提示词
+      |
+      v
+输出: [专利名称]_专利技术交底书.docx
+      [专利名称]_全套AI生图提示词.docx
+```
+
+| Skill | 定位 | 路径 |
+|---|---|---|
+| **CNpatent-noveltycheck** | 唯一入口，新颖性 + 创造性初筛 | `.claude/skills/CNpatent-noveltycheck/` |
+| **CNpatent** | 下游写作，verified_outline 到 .docx | `.claude/skills/CNpatent/` |
+| **CNpatent-humanizer** | 去 AI 痕迹润色，Phase 2 自动调用 | `.claude/skills/CNpatent-humanizer/` |
 
 ## 快速开始
 
@@ -12,22 +43,11 @@
 pip install python-docx
 ```
 
-### 2. 安装依赖 Skill
-
-本工具运行时需要以下 Claude Code Skill，请确保已安装：
-
-| Skill | 用途 |
-|-------|------|
-| **humanizer** | 去 AI 写作痕迹 |
-| **pdf** | 读取 PDF 参考素材 |
-| **docx** | 读取 .docx 参考素材 |
-
-### 3. 使用
+### 2. 使用
 
 在本目录下启动 Claude Code，直接对话即可：
 
 ```bash
-cd patent
 claude
 ```
 
@@ -35,144 +55,88 @@ claude
 帮我写一份专利技术交底书，参考这篇论文，目标领域是工业焊缝检测
 ```
 
-```
-把这个技术方案转成专利交底书，应用场景是隧道巡检无人机
-```
+Claude 会自动触发 CNpatent-noveltycheck skill，引导你完成新颖性初筛 + 写作全流程。
 
-Claude 会自动识别并加载 CNpatent skill，引导你完成整个流程。
+**用户需要手动操作的环节**：
+1. Phase B.2 — 在 incoPat 等付费库做人工核查（约 60-90 分钟）
+2. 确认绿灯后自动进入写作，无需额外交互
 
-## 工作流程
+### 3. 依赖 Skill
 
-```
-你提供：参考素材（论文/技术文档）+ 目标应用领域
-                    ↓
-        Phase 0  场景迁移 + 微创新设计 + 生成结构化大纲
-                    ↓
-              ★ 你确认大纲（唯一需要你操作的环节）★
-                    ↓
-        Phase 1  5 个 Writer Agent 并行生成全部章节
-                    ↓
-        Phase 2  Reviewer Agent 自动审查修正
-                    ↓
-        Phase 3  整合 + 去AI痕迹兜底 + 写入 .docx
-                    ↓
-        Phase 4  自动验证文档完整性
-                    ↓
-        Phase 5  自动生成 AI 附图提示词
-                    ↓
-        输出：[专利名称]_专利技术交底书.docx
-              [专利名称]_全套AI生图提示词.docx
-```
-
-**确认大纲后全程自动，无需反复交互。**
+| Skill | 用途 | 来源 |
+|---|---|---|
+| **pdf** | 读取 PDF 参考素材 | 内置或 anthropic-skills |
+| **docx** | 读取 .docx 参考素材 | 内置或 anthropic-skills |
 
 ## 输出文件
 
 | 文件 | 内容 |
 |------|------|
-| `[专利名称]_专利技术交底书.docx` | 完整的专利技术交底书，包含说明书和摘要 |
+| `[专利名称]_专利技术交底书.docx` | 完整的电学类专利技术交底书（一到六节） |
 | `[专利名称]_全套AI生图提示词.docx` | 每张附图的防幻觉 AI 生图提示词 |
 
-生成的交底书包含以下章节：
+生成的交底书包含以下章节（不含权利要求书）：
 
 ```
-【说明书】
-  发明名称
-  技术领域
-  背景技术
-  发明内容（含有益效果）
-  附图说明
-  具体实施方式
-
-【说明书摘要】
+一、发明名称
+二、技术领域
+三、背景技术
+四、发明内容（发明目的 / 技术解决方案 / 技术效果）
+五、附图说明
+六、具体实施方式
 ```
 
-注：权利要求书由专利代理人根据交底书另行撰写，本工具不生成权利要求书。
+权利要求书由专利代理人根据交底书另行撰写。
 
 ## 核心能力
 
-### 场景迁移与微创新
-
-不是简单地把论文翻译成专利格式。工具会：
-- 将学术算法从实验室环境迁移到你指定的工程场景
-- 从新场景的工程约束重新推导技术痛点
-- 设计与现有技术差异化的微创新点
-
-### 多 Agent 并行架构
-
-```
-Planner ──→ Writer-A（技术领域+背景技术）  ──→ Reviewer ──→ DOCX
-            Writer-B（发明内容）
-            Writer-C（具体实施方式·前半）
-            Writer-D（具体实施方式·后半）
-            Writer-E（附图说明+摘要）
-```
-
-5 个 Writer 并行生成，Reviewer 自动审查一致性、防幻觉、去 AI 味。所有 Agent 使用 opus 模型。
-
-### 三层去 AI 痕迹
-
-| 层级 | 说明 |
-|------|------|
-| 写作预防 | 禁用词表注入 Writer prompt，写作时即避免 |
-| 正则替换 | `final_deai_cleanup()` 硬编码替换 30+ 种 AI 高频模式 |
-| Reviewer 终审 | 句式结构检测 + 同义词轮换检测 + humanizer skill 润色 |
-
-### 信息源锚定（防幻觉）
-
-- 所有数值参数必须标注来源（`[源:论文X节]`）
-- 无法确认的内容标记 `[待确认]`，不编造
-- 每个 Writer 单次输出 ≤3000 字，避免长文质量衰减
-
-### 真实专利行文经验
-
-基于 5 份中国发明专利文档提取的写作模式，包括：
-- 背景技术"漏斗式"段落节奏
-- 发明内容"问题-方案"交叉叙事
-- 步骤标题功能名词短语命名法
-- "所述"回指分区策略
-- 公式"夹叙夹议"穿插物理直觉解读
-- "一简一繁"描述策略（已有技术简写、创新步骤详写）
+- **前置新颖性筛查** — 写专利前先查重，防止写完才发现撞车
+- **场景迁移与微创新** — 从论文场景迁移到目标领域，推导差异化创新点
+- **4 Writer 并行架构** — Writer-A/B/C/D 分工并行，opus 模型驱动
+- **三层去 AI 痕迹** — 写作预防 + 正则替换 + CNpatent-humanizer 深度润色
+- **信息源锚定** — 所有参数标注来源 `[源:论文X节]`，无法确认标 `[待确认]`
+- **公式全局重编号** — Phase 3 自动修复 Writer 并行产生的公式编号冲突
+- **品牌词自动拦截** — 发明名称里的英文品牌词被功能性描述替换
 
 ## 目录结构
 
 ```
-patent/
-├── README.md                          ← 你正在看的文件
-└── .claude/
-    └── skills/
-        └── CNpatent/
-            ├── SKILL.md               ← Skill 核心定义（触发规则+执行流程+质量清单）
-            ├── README.md              ← Skill 详细文档
-            ├── LICENSE                ← MIT
-            ├── assets/
-            │   └── 专利交底书模板.docx  ← 内置 DOCX 模板（页眉页脚+分节结构）
-            └── references/
-                ├── writing-rules.md   ← 专利语言规范 + 禁用词表 + 去AI规则
-                └── docx-patterns.md   ← python-docx 代码模板
+.claude/skills/
+├── CNpatent-noveltycheck/       # 入口 skill
+│   ├── SKILL.md
+│   ├── DESIGN.md                # 架构设计 (v1.0 + v1.1 补丁)
+│   ├── agents/                  # screener / guide / judge 角色文件
+│   ├── references/              # 法律标准 / 检索方法 / 模板 / AI精读卡片
+│   └── user_profile.yml         # 用户付费库访问配置
+├── CNpatent/                    # 下游写作 skill
+│   ├── SKILL.md
+│   ├── agents/                  # planner / writer-a~d / reviewer 角色文件
+│   ├── assets/                  # DOCX 模板
+│   ├── references/              # 写作规范 / docx代码模板 / 质量检查清单
+│   └── scripts/                 # cnpatent_docx.py / deai_cleanup.py / formula_renumber.py
+└── CNpatent-humanizer/          # 去 AI 味 skill
+    ├── SKILL.md
+    ├── references/              # 7 份检测与改写规范
+    └── scripts/                 # audit.py / burstiness.py / regex_clean.py
 ```
 
 ## 常见问题
 
-**Q: 生成的文档可以直接提交给专利代理人吗？**
+**Q: 可以跳过新颖性筛查直接写交底书吗？**
 
-可以。生成的交底书符合 CNIPA 规范格式，专利代理人可直接基于此撰写权利要求书并提交申请。
-
-**Q: 支持哪些类型的参考素材？**
-
-PDF 论文、.docx 技术文档、纯文本描述、网页链接均可。至少提供一份包含技术方案细节的素材。
+不可以。CNpatent 已改造为只接受 CNpatent-noveltycheck 的 `5_verified_outline.md` 作为输入。直接调用 CNpatent 会被拒绝。
 
 **Q: 为什么不生成权利要求书？**
 
-权利要求书的撰写需要专利法律专业知识和检索策略，直接影响专利保护范围。建议交由专业专利代理人根据交底书撰写。
+权利要求书是法律文件，涉及保护范围界定。建议交由专业专利代理人根据交底书撰写。
 
-**Q: 生成过程需要多长时间？**
+**Q: 支持哪些参考素材格式？**
 
-确认大纲后全自动运行，5 个 Writer 并行生成，通常一次完成。具体时间取决于参考素材的复杂度。
+PDF 论文、.docx 技术文档、纯文本描述、网页链接均可。
 
-**Q: 可以修改内置模板吗？**
+**Q: Phase B.2 的人工核查可以省略吗？**
 
-可以。将你自己的 .docx 模板放在工作目录下，工具会优先使用你的模板。注意模板的分节结构可能不同，工具会自动重新扫描。
+不可以。免费库检索只能做提示性判断，必须走完 Phase B.2 + Phase C 才能出绿灯。
 
 ## 许可证
 

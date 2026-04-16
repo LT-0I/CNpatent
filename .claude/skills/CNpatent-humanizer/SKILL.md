@@ -14,7 +14,9 @@ description: >
   this skill whenever you need to remove AI traces from Chinese patent text —
   never use the generic `humanizer` skill on patent text, it will break
   terminology lock, introduce hedging, add inappropriate first-person voice,
-  and corrupt the legal register.
+  and corrupt the legal register. Triggers on: 去AI味, 去AI痕迹, 专利去AI,
+  人类化润色, humanize patent, de-AI patent, 专利润色, 交底书润色,
+  remove AI traces from patent.
 ---
 
 # CNpatent-humanizer — 中文专利文本去 AI 味器
