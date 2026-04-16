@@ -188,36 +188,27 @@ verify_docx(output_path)
 
 ## Anti-Hallucination Figure Prompts
 
-附图提示词写入**独立文档**（不是主交底书），用普通 `Document()` 创建即可：
+附图提示词写入**独立 Markdown 文件**（不是主交底书，不使用 python-docx）：
 
 ```python
-from docx import Document
-from docx.shared import Pt, RGBColor
+from pathlib import Path
 
-prompt_doc = Document()  # 空白文档即可
+lines = ['# 全套 AI 生图提示词\n']
+lines.append('以下提示词用于 AI 生图工具（Midjourney / DALL-E / Stable Diffusion 等），每张图单独一段。\n')
 
-for fig_num in range(1, 11):
-    prompt_doc.add_heading(f'Figure {fig_num}: ...', level=1)
-    para = prompt_doc.add_paragraph()
+for fig_num in range(1, N + 1):
+    lines.append(f'## 图{fig_num}\n')
+    lines.append(f'Scientific diagram, patent illustration style...\n')
+    lines.append(f'> **STRICT WARNING:** The diagram MUST ONLY contain the following '
+                 f'Simplified Chinese text labels: [...]. '
+                 f'DO NOT GENERATE ANY OTHER TEXT, LETTERS, NUMBERS, SYMBOLS, '
+                 f'OR FAKE CHINESE CHARACTERS. DO NOT ADD ANY FORMULAS OR EQUATIONS. '
+                 f'DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.\n')
 
-    # 主体（普通字号）
-    run_main = para.add_run('Scientific diagram, patent illustration style...')
-    run_main.font.size = Pt(10.5)
-
-    # 警告段（粗体红色）
-    warning = (
-        'STRICT WARNING: The diagram MUST ONLY contain the following '
-        'Simplified Chinese text labels: [...]. '
-        'DO NOT GENERATE ANY OTHER TEXT, LETTERS, NUMBERS, SYMBOLS, '
-        'OR FAKE CHINESE CHARACTERS.'
-    )
-    run_warn = para.add_run(warning)
-    run_warn.bold = True
-    run_warn.font.size = Pt(10.5)
-    run_warn.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
-
-prompt_doc.save('outputs/xxx/xxx_全套AI生图提示词.docx')
+Path('outputs/xxx/xxx_全套AI生图提示词.md').write_text('\n'.join(lines), encoding='utf-8')
 ```
+
+Markdown 格式比 docx 更轻量，用户可直接复制粘贴到 AI 生图工具。警告段用 blockquote + bold 呈现。
 
 ## Image Insertion
 

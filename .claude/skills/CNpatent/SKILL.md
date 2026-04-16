@@ -144,8 +144,8 @@ SYMBOLS, OR FAKE CHINESE CHARACTERS. DO NOT ADD ANY FORMULAS OR EQUATIONS.
 DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 ```
 
-**⑤ 静默写入**：提示词不输出到聊天窗口，直接写入 `[专利名称]_全套AI生图提示词.docx`。
-警告段落设置为**粗体红色**（#CC0000）。
+**⑤ 静默写入**：提示词不输出到聊天窗口，直接写入 `[专利名称]_全套AI生图提示词.md`。
+警告段落用 `> **STRICT WARNING:**` blockquote + bold 格式呈现。
 
 ### 铁律 5：信息源锚定（防幻觉）
 
@@ -255,8 +255,8 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 |-------------|---------|---------|
 | **Writer-A** | 一、发明名称 + 二、技术领域 + 三、背景技术 | ~1200字 |
 | **Writer-B** | 四、发明内容（发明目的 + 技术解决方案 + 技术效果 三个子节） | ~3500字 |
-| **Writer-C** | 五、附图及附图的简单说明 + 六、具体实施方式·前半部分（前 N/2 步骤） | ~3500字 |
-| **Writer-D** | 六、具体实施方式·后半部分（后 N/2 步骤 + 总结） | ~3500字 |
+| **Writer-C** | 五、附图及附图的简单说明（不写声明段） + 六、具体实施方式·前半步骤（不写法律声明/概述/环境段） | ~3500字 |
+| **Writer-D** | 六、具体实施方式·后半步骤（不写效果/总结/结尾段，步骤写完即止） | ~3500字 |
 
 > 本交底书格式**不含摘要**（300字摘要），因此相比"说明书"格式减少了 Writer-E。
 
@@ -299,9 +299,12 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 **Writer-C 与 Writer-D 的衔接约定**：
 - 大纲中六、的步骤按序号一分为二，前半给 Writer-C（写入 `_part_six_first.md`），后半给 Writer-D（写入 `_part_six_second.md`）
+- Writer-C 不写法律声明段、实施例标题、概述段、环境说明段，直接从第一个步骤开始
 - Writer-C 的最后一个步骤末尾不加总结性语句
 - Writer-D 从下一个步骤编号继续，开头不加过渡性引言
+- Writer-D 不写技术效果段、总结段、结尾段，最后一个步骤写完即止
 - 拼接为 `6_implementation.md` 后，由 Reviewer 在 Phase 2 中负责检查衔接处的段落过渡是否自然
+- **全文禁止使用"所述"**：用"上述"、"该"、"前述"等自然回指代替
 
 ### Phase 2：自动审查与修正（自动执行）
 
@@ -394,17 +397,19 @@ if report.changed:
 
 任一断言失败时函数抛出 `AssertionError`，定位到出错段落。完整实现见 [docx-patterns.md](references/docx-patterns.md) 的 "Post-Modification Verification" 章节。
 
-### Phase 5：静默生成附图提示词（自动触发）
+### Phase 5：静默生成附图提示词（自动触发，输出 .md）
 
-主文档保存后自动执行，**禁止在聊天窗口输出提示词内容**。使用 python-docx 创建独立文档 `[专利名称]_全套AI生图提示词.docx`，按图编号逐张写入：
+主文档保存后自动执行，**禁止在聊天窗口输出提示词内容**。生成 Markdown 文件 `[专利名称]_全套AI生图提示词.md`（不再生成 .docx），按图编号逐张写入：
 
 - **主体段**：场景描述 + 中文标签的空间锚定（"位置编码 labeled in the top-left rectangular block"）
-- **警告段**：粗体红色（#CC0000）的全大写 STRICT WARNING 段（铁律 4 ④）
+- **警告段**：全大写 STRICT WARNING 段（铁律 4 ④），用 `> **STRICT WARNING:**` blockquote + bold 格式
 
-完整代码模板见 [docx-patterns.md](references/docx-patterns.md) 的 "Anti-Hallucination Figure Prompts" 章节。
+每张图的提示词用 `## 图N` 二级标题分隔。文件头部加一行说明："以下提示词用于 AI 生图工具（Midjourney / DALL-E / Stable Diffusion 等），每张图单独一段。"
+
+**Why 改用 .md**：提示词只是给 AI 生图工具的纯文本输入，不需要 docx 的排版能力。Markdown 更轻量，不依赖 python-docx，用户可直接在编辑器里复制粘贴。
 
 聊天窗口仅输出一句确认：
-> ✅ 全套附图的防幻觉 AI 生图提示词已保存至 outputs/[专利名称]/[专利名称]_全套AI生图提示词.docx。
+> ✅ 全套附图的防幻觉 AI 生图提示词已保存至 outputs/[专利名称]/[专利名称]_全套AI生图提示词.md。
 
 ### Phase 6：附图修正（按需触发）
 
@@ -416,7 +421,7 @@ if report.changed:
 2. **全局图号替换**：使用两阶段占位符策略，避免链式替换冲突（详见 [docx-patterns.md](references/docx-patterns.md)）
 3. **删除孤儿段落**：按索引逆序删除标记的段落
 4. **验证**：重新加载保存的文件，检查附图说明连续性、正文引用一致性、图题完整性
-5. **更新提示词文档**：如果图号变化，同步更新 AI 生图提示词文档
+5. **更新提示词文档**：如果图号变化，同步更新 `[专利名称]_全套AI生图提示词.md`
 
 **关键技术要点**：
 - python-docx 中文本常被拆分到多个 Run，**必须使用段落级替换**（`para_replace`），不能在单个 Run 中搜索。详见 [docx-patterns.md](references/docx-patterns.md) 的 "Run Splitting Problem" 章节。
@@ -450,7 +455,7 @@ outputs/[专利名称]/
 │   ├── 5_figures.md                    # 五、附图说明
 │   └── 6_implementation.md             # 六、具体实施方式
 ├── [专利名称]_专利技术交底书.docx       # Phase 3 最终 DOCX
-└── [专利名称]_全套AI生图提示词.docx     # Phase 5 静默生成的附图提示词
+└── [专利名称]_全套AI生图提示词.md       # Phase 5 静默生成的附图提示词（Markdown）
 ```
 
 **Why 第四节拆三个文件**：四·发明目的、四·技术解决方案、四·技术效果三者构成"对应三角"（背景技术局限 ↔ 优势 ↔ 效果），用户最常对照修改这三段内容。拆分后可以并排打开三者 + `3_background.md`，校对对应关系一目了然。其他章节没有这种对应需求，所以不拆。
