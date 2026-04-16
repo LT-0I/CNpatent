@@ -267,7 +267,9 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 1. **锁定的大纲片段** —— `01_outline.md` 中与该 Writer 任务相关的部分（含主旨四段式）
 2. **参考素材原文片段** —— 与该 Writer 负责章节对应的参考材料段落
 3. **术语锁定表** —— 从大纲里提取，每个 Writer 都收到完全相同的一份
-4. **Writer-C/D 衔接信息** —— Writer-C 的最后一个步骤编号 K（供 Writer-D 的起点使用）
+4. **Writer-C/D 衔接信息** —— 两项元数据：
+   - **步骤编号**：Writer-C 的最后一个步骤编号 K（供 Writer-D 从 K+1 起续写）
+   - **公式编号区段**（v1.1 新增）：Writer-C 使用（1）-（10），Writer-D 从（11）起。如大纲预估 Writer-C 的公式需求超过 10 个，orchestrator 酌情扩到（15）并让 Writer-D 顺延。**Why**：2026-04-15 测试（Issue 3）发现两个 Writer 都从（4）开始编号，合并后出现重复。预分配区段是软约束，Phase 3 步骤 1a 的全局重编号脚本是硬兜底。
 5. **工作目录绝对路径** —— `outputs/[专利名称]/sections/` 的完整路径，供 Writer 直接写文件
 6. **`[待确认]` / `[源:...]` 标记约定** —— 一句话提醒；详细规则在角色文件 body 里
 
@@ -336,6 +338,19 @@ sections/ 中已经是按章节组织的最终文本，本阶段只做"清理 + 
 **步骤 1 — 兜底清理（in-place）**：对 sections/ 下的 8 个 .md 文件依次调用 `scripts/deai_cleanup.py` 的 `final_deai_cleanup()`（纯正则替换，不依赖 AI 判断），结果写回原文件。
 
 **Why in-place**：保证 `sections/*.md` 永远反映 DOCX 中的实际内容；用户基于 sections/ 编辑后再次跑 Phase 3 时，cleanup 是幂等的，重复调用无副作用。这样用户无论何时打开 sections 文件，看到的都是与 DOCX 一致的"最终状态"。
+
+**步骤 1a — 公式编号全局校验与重编号（v1.1 新增，in-place）**：对 `sections/6_implementation.md` 调用 `scripts/formula_renumber.py` 的 `renumber_formulas_in_file()`，按公式定义在文本中的出现顺序重编号为连续的（1）（2）（3）...，同时更新所有 `式（N）` / `公式（N）` 引用。
+
+```python
+from formula_renumber import renumber_formulas_in_file
+report = renumber_formulas_in_file(impl_path)
+if report.changed:
+    print(f"公式重编号: {report}")
+```
+
+脚本使用两阶段占位符替换避免链式冲突（与 Phase 6 图号重编号同理）。如公式序列已经连续且从 1 开始，脚本不写文件（幂等）。
+
+**Why 这一步是必要的**：Phase 1 步骤 2 给 Writer-C/D 预分配了公式编号区段，但那是 LLM 软约束，Writer 可以不遵守。2026-04-15 测试（Issue 3）实证了这一失败模式。本步骤是确定性硬兜底，不依赖 AI 判断。
 
 **步骤 2 — 按序写入 DOCX**：使用 `scripts/cnpatent_docx.py` 的辅助函数（按铁律 1 的代码块导入），按以下映射读取 sections/ 文件并写入对应的模板锚点：
 
