@@ -12,7 +12,7 @@
 - **多 Agent 并行架构** — Planner 生成大纲 → 4 个 Writer Agent 并行写作 → Reviewer Agent 三重 rubric 审查（非 open critique），大纲确认后全程无需人工干预。所有角色（Planner / Writer-A/B/C/D / Reviewer）的角色简报和写作规则定义在 `agents/` 子目录下的角色文件里；orchestrator 调用时显式传 `model="opus"` 强制模型层级
 - **三层去 AI 痕迹** — 写作预防 + 正则自动替换 + Reviewer 终审（调用 `CNpatent-humanizer` skill 做专利专用的人类化润色）
 - **信息源锚定（防幻觉）** — 所有技术内容追溯到参考素材，无法确认的参数标记 `[待确认]`，杜绝内容编造
-- **可编辑的最终态文本 + 断点重启** — 工作目录只保留 `01_outline.md`（大纲）和 `sections/*.md`（8 个章节文件，DOCX 写入前的最终文本），用户编辑任意章节后只需重跑 Phase 3 即可重新生成 DOCX，无需重跑 Writer/Reviewer
+- **可编辑的最终态文本 + 修改工作流** — 工作目录只保留 `01_outline.md`（大纲）和 `sections/*.md`（8 个章节文件），DOCX 交付后用户以自然语言提修改意见，skill 自动分级路由（微调/段落/章节/大纲）执行修改并重新生成 DOCX
 - **防幻觉附图提示词** — 静默生成空间锚定的 AI 生图提示词，附带严格文字排他警告
 - **纯文本 LaTeX 公式** — 所有数学公式以纯文本 LaTeX 写入，使用模板的 `公式` 段落样式
 - **bundled scripts** — `scripts/cnpatent_docx.py` 提供 docx 操作辅助函数（模板加载/锚点定位/公式写入/写后验证），`scripts/deai_cleanup.py` 提供写入前去 AI 兜底正则。所有 docx 操作单一真理源，避免每次调用时重复定义
