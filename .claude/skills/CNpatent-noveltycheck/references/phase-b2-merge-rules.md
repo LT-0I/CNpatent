@@ -1,93 +1,71 @@
 # Phase B.2 结果合并与同族去重规则
 
-> 用途：Phase B.2 所有 subagent（T1-T6）完成后，orchestrator 按本文件定义的算法合并 6 份 `queryN.json`，做同族去重、跨通道合并、相关性评分，最终写入 `4_manual_search_template.md` B.2 字段。
+> 用途：Phase B.2 所有 subagent（T1-T6）完成后，orchestrator 按本文件定义的算法合并 6 份 `queryN.json` 并写入 `4_manual_search_template.md` B.2 字段。
 >
 > 定位：下游实现规范。Judge 不读此文件，只看合并后的 template。
 
 ---
 
-## 1. 输入
+## 1. 同族合并 —— 走 incoPat 站内功能
+
+**不自己写启发式同族判定**。incoPat 结果页自带完整的同族合并控件（简单同族合并 / 扩展同族合并 / DocDB同族合并）。Playwright subagent 在 inject → sort 之后、extract 之前调用 `scripts/playwright/incopat_merge_family.js`，让 incoPat 服务端自己做族内聚合。extract 脚本返回的每一行就是族代表，不需要 orchestrator 做二次分组。
+
+**单通道查询流程**（incoPat T1/T3 命令检索、T2 语义检索）：
 
 ```
-.omc/research/
-├── incopat_command/queryN.json
-├── incopat_semantic/query1.json
-├── incopat_conflict/query1.json
-├── cnki/queryN.json
-├── scholar/queryN.json
-└── arxiv/queryN.json
+1. browser_tabs 切目标 tab
+2. browser_navigate /advancedSearch/init (或 /semanticSearch/init)
+3. browser_evaluate incopat_inject.js (或 incopat_semantic_inject.js)
+4. browser_wait_for 3 秒
+5. browser_evaluate incopat_sort.js (AD DESC 排序)
+6. browser_wait_for 2 秒
+7. browser_evaluate incopat_merge_family.js  ← 站内简单同族合并
+8. browser_wait_for 3 秒                      ← 等 incoPat 重新渲染
+9. browser_evaluate incopat_extract.js        ← 每行已是族代表
+10. Write .omc/research/<channel>/queryN.json
 ```
 
-每条记录（incoPat 通道）典型字段：
-```json
-{
-  "pn": "CN118570217B",
-  "an": "CN202410012345.6",
-  "family_key": "CN20241001",
-  "family_tag": "中国同族 3",
-  "family_count": 3,
-  "title_cn": "...",
-  "ad": "2024-01-05",
-  "pd": "2025-01-14",
-  "applicant": "...",
-  "ipc": "G06T7/00"
-}
-```
+`incopat_extract.js` 返回 `family_merged: true` + `total_text: "N个专利族"` 时，orchestrator 知道结果已站内合并。
+
+**CNKI / Scholar / arXiv 不做同族**。非专利文献没有"族"概念，按 url / title 去重即可。
 
 ---
 
-## 2. 合并算法（按此顺序执行）
+## 2. orchestrator 合并算法（剩余职责）
 
-### Step 1 — 通道内同 PN 去重
+incoPat 站内合并解决了单通道内的族冗余。orchestrator 只负责**跨通道 + 跨来源**的简单去重：
 
-同一通道（如 T1）内，若多条查询命中了相同 `pn`，合并为一条。保留首次出现的位置索引（用于后续排序）。
+### Step 1 — 跨通道同 PN 合并
 
-### Step 2 — 跨通道同 PN 合并
-
-不同通道命中同一 `pn`：
+同一 `pn` 在多个 incoPat 通道（T1/T2/T3）命中：
 - 合并为一条
-- 记录 `hit_channels: [T1, T3]` 用于多通道交叉验证信号
-- 相关性评分取 **最高值**（非平均）
+- 记录 `hit_channels: [T1-Q1, T3-Q1]`（多通道命中 = 强相关性信号）
 
-### Step 3 — 同族合并（核心）
+### Step 2 — 跨通道同 AN 合并（兜底）
 
-**同族判定（两层）**：
+若某个 `pn` 只在一个通道出现，但另一条命中的 `an` 和它相同（同一申请的不同公开阶段，如 A 公开 / B 授权）：
+- 合并为一条
+- 保留 `pd` 最晚的 `pn` 作为代表
+- 其余进入 `also_published_as: [...]`
 
-1. **强同族**（确定）：
-   - `family_key` 相同（申请号前 10 位一致）→ 同族
-   - 或 `an` 完全相同 → 同专利不同公开号（如 CN...A 和 CN...B，实际是同一申请的公开→授权两次公开）
+这种情况在 incoPat 内已通过同族合并基本消除，但跨通道（T1 简单同族 vs T2 语义结果）仍可能出现。
 
-2. **弱同族**（启发式，需同时满足）：
-   - `applicant` 完全一致（去除标点空格后）
-   - `ad` 日期差 ≤ 7 天
-   - `title_cn` 相似度 ≥ 80%（简单字符重合率即可，不需要 embedding）
+### Step 3 — Phase A 去重标记
 
-**合并时保留谁**：
-- 公开日（`pd`）**最晚**的那条作为代表（最接近当前授权状态）
-- 若 `pd` 相同，保留 `pn` 字母后缀较晚的（B > A，C > B，授权 > 公开）
-- 被合并的条目列入 `family_members: ["CN118570217A", ...]`
+读 `1_auto_novelty_report.md` 的 Top 命中 PN 列表：
+- B.2 某条的 `pn` 已在 Phase A → `phase_a_duplicate: true`
+- **不从 B.2 移除**，保留作为跨阶段一致性证据
+- template 里加 "（Phase A 已命中）" 标记
 
-**不做同族合并的情况**：
-- `family_tag` 为空（孤立专利）
-- 非 incoPat 通道（Scholar / arXiv / CNKI 无同族概念，按 `url` 或 `title` 去重）
-
-### Step 4 — 与 Phase A 命中去重
-
-读 `1_auto_novelty_report.md` 的 Top 命中列表。若 B.2 某条的 `pn` 或 `family_key` 已出现在 Phase A，标记 `phase_a_duplicate: true`：
-- **不从 B.2 移除**（保留作为跨阶段一致性证据）
-- 在 template 中加标记 "（Phase A 已命中）"
-
-### Step 5 — 非专利去重
+### Step 4 — 非专利去重
 
 Scholar / arXiv / CNKI 的命中：
-- 按 `url` 去重（首选）
-- 若 url 缺失，按 `title` 精确匹配去重
+- 优先按 `url` 去重
+- `url` 缺失时按 `title` 精确匹配去重
 
 ---
 
 ## 3. 相关性评分
-
-### 评分维度
 
 对每条合并后的命中，针对 `candidate_outline` 的每个区别特征（F1…Fn）打分：
 
@@ -99,32 +77,29 @@ Scholar / arXiv / CNKI 的命中：
 | 3 | 强相关 | 方法实质相同，参数接近 |
 | 4 | 直接命中 | 明确披露该特征 |
 
-**评分只基于检索返回字段**（pn / title / abstract / ipc），**不做全文推断**。全文推断是 Phase B.1 精读卡的职责。
-
-### 综合相关性
+**评分只基于检索返回字段**（pn / title / ipc）。全文推断由 Phase B.1 精读卡承担，不在此阶段做。
 
 ```
-relevance_total = Σ(Fi_score for i in 1..n)
+relevance_total = Σ(Fi_score)
 ```
 
-按 `relevance_total` 降序排列。
+**跨通道加权**：同一 `pn` 在多个通道命中 → `relevance_total × 1.2`（上限 `4 × n`）。
 
-### 跨通道加权
-
-同一 `pn` 在多个通道命中 → relevance_total × 1.2（上限 4×n）。
+按 `relevance_total` 降序写入 template。
 
 ---
 
 ## 4. 输出格式
 
-写入 `4_manual_search_template.md` 的 `## 二、B.2 付费库检索结果` 段落。每条合并后的命中：
+`4_manual_search_template.md` 的 `## 二、B.2 付费库检索结果`，每条合并后命中：
 
 ```markdown
 ### 命中 #N
 
-- **pn**: CN118570217B（授权公告号，代表本族）
-- **family_members**: CN118570217A（公开）
-- **hit_channels**: [T1-Q1, T3-Q1]（命令检索 + 抵触申请）
+- **pn**: CN118570217B
+- **an**: CN202410012345.6
+- **also_published_as**: [CN118570217A]（同申请不同公开阶段，按 AN 合并时列出）
+- **hit_channels**: [T1-Q1, T3-Q1]
 - **phase_a_duplicate**: true / false
 - **title**: ...
 - **ad / pd**: ...
@@ -139,20 +114,20 @@ relevance_total = Σ(Fi_score for i in 1..n)
 
 ## 5. orchestrator 实现要点
 
-- **不要让 subagent 做合并**。subagent 只负责单通道内的查询 + 提取 + 原始 JSON 落盘。合并是 orchestrator 的主职责，保持逻辑集中。
-- **合并前打印每个通道的命中数** → 合并后总数，便于用户 sanity check（用户会看到"T1 原始 80 → 合并后 62"这样的日志）。
-- **同族合并务必输出日志**："合并同族：CN118570217A + CN118570217B → 保留 CN118570217B，另 1 条归入 family_members"。
-- **evidence anchor 必保留**：每条命中的 `raw_json_ref` 必须指向具体 queryN.json 的某条记录（orchestrator 可用 0-based index）。Phase C Judge 需要回溯。
+- **incoPat subagent 必须在 extract 前调 merge_family**，否则族冗余会污染结果
+- **不要做启发式族判定**（相似 title + 近 AD + 同申请人）—— 会把不同发明错并成一族，incoPat 服务端的合并规则已久经验证，信任即可
+- **验证族代表**：extract 返回的 `family_merged: true` + `total_text: "N个专利族"` 是 merge 生效的标志；若 `family_merged: false`，说明 merge 脚本失败（如 `window.mergeCongeners` 不可用），orchestrator 应记录警告但仍可继续（按 v1.2 行为回退到未合并结果）
+- **evidence anchor 必保留**：每条命中的 `raw_json_ref` 指向具体 queryN.json 的 index，Phase C Judge 要能回溯原始数据
 
 ---
 
 ## 6. 反模式
 
-| 反模式 | 说明 |
+| 反模式 | 后果 |
 |---|---|
-| 跨通道评分取平均 | 错。取最高值——因为高分说明至少一个通道确认强相关 |
-| 同族合并用 IPC | 错。同发明可能多 IPC，不同发明可能同 IPC。必须用 AN 或 family_key |
-| 启发式合并阈值过宽 | 错。title 相似度 < 80% 或 ad 差 > 7 天不合并，否则会误并 |
-| 覆盖 Phase A 去重 | 错。不从 B.2 移除 Phase A 已有命中，只打标 |
-| 让 subagent 判定 family_key | 错。subagent 只抓原始字段，family_key 在 orchestrator 合并阶段计算（subagent 返回的 family_key 仅供参考） |
-| 合并后丢掉 raw_json_ref | 错。Phase C Judge 必须能回溯到原始 queryN.json，否则无锚点 |
+| 把同族判定塞给 subagent | 单通道 subagent 看不到跨通道全局，且不该重新实现 incoPat 已做的事 |
+| 启发式族判定（title + applicant + AD） | 会误并不同发明；incoPat 服务端的官方合并规则更可靠 |
+| 跨通道评分取平均 | 取最高值——高分说明至少一个通道确认强相关 |
+| 覆盖 Phase A 去重 | 不从 B.2 移除 Phase A 已有命中，只打标 |
+| 合并后丢掉 raw_json_ref | Phase C Judge 必须能回溯到原始 queryN.json |
+| merge_family 失败后继续当作已合并 | 必须检查 `family_merged` 标志，假阴性会导致族内冗余污染 template |

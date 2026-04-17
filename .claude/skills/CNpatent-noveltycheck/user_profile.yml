@@ -88,18 +88,14 @@ playwright:
 
   # ── AI 自主登录配置 (v1.2.1) ──
   # Phase B.2 默认走 IP 登录: incoPat 和 CNKI 在校园 IP 段下自动认证, 不需要表单/密码.
-  # orchestrator 通过 Playwright 打开页面后, 站点基于请求 IP 自动发回登录态 cookie.
+  # Playwright 打开页面后, 站点基于请求 IP 自动发回登录态 cookie.
   # *_check_login.js 脚本用于"验证 IP 登录是否生效", 失败才退回用户手工登录.
+  #
+  # 生效条件: Claude Code 本身必须运行在校园网 / 机构认可的 IP 段内.
+  # 若不在, 自动登录必然失败, 退回用户手工登录模式.
   auto_login:
     enabled: true               # 启用 IP 自主登录. false = 跳过, 直接用户手工登录
     strategy: ip_login          # ip_login = 依赖 IP 段自动认证 (唯一实装策略)
-
-    # 若 Claude Code 运行环境不在校园 IP 段, 需用代理让 Playwright 出口 IP 落到校园段.
-    # 设置方式: 在启动 Playwright MCP 时加 --proxy-server 参数:
-    #   claude mcp add playwright -- npx -y @playwright/mcp@latest \
-    #     --proxy-server=http://proxy.university.edu:8080
-    # 本字段仅供 orchestrator 检测/提示, 不会自动重启 MCP.
-    proxy_server: null          # 例: "http://proxy.university.edu:8080" / "socks5://127.0.0.1:1080"
 
     # 验证策略
     max_retries: 1              # 单 tab 检测失败后重试次数 (0 = 不重试直接降级)

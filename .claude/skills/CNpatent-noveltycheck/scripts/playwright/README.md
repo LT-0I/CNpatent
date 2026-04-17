@@ -25,8 +25,9 @@ subagent 执行步骤：
 |---|---|---|---|
 | `incopat_check_login.js` | incoPat | 登录态检测 (v1.2.1) | 无 |
 | `incopat_inject.js` | incoPat | 命令检索注入 + 点击搜索 | `__QUERY__` |
-| `incopat_extract.js` | incoPat | 选择性 DOM 结果提取 + 申请号 + 同族字段 | `__TOP_N__` |
 | `incopat_sort.js` | incoPat | 排序切换为申请日倒序 | 无 |
+| `incopat_merge_family.js` | incoPat | 站内简单同族合并 (v1.2.1) | 无 |
+| `incopat_extract.js` | incoPat | 选择性 DOM 结果提取 + 申请号 + 同族标志 | `__TOP_N__` |
 | `incopat_semantic_inject.js` | incoPat | 语义检索注入 + 点击搜索 | `__SEMANTIC_TEXT__` |
 | `cnki_check_login.js` | CNKI | 登录态检测 (v1.2.1) | 无 |
 | `cnki_inject.js` | CNKI | 高级检索注入 (SU= 语法) + 点击搜索 | `__QUERY__` |
@@ -39,28 +40,13 @@ subagent 执行步骤：
 
 incoPat 和 CNKI 对校园/机构 IP 段做自动认证：访问的客户端 IP 在白名单里时，站点直接派发登录态 cookie，**无需表单、无需密码、无需点按**。Phase B.2 的"AI 自主登录"就是让 Playwright 走这个机制。
 
-### 让 Playwright 走校园 IP 的两种方式
+### 生效前提
 
-**方式 A：Claude Code 跑在校园网内**
-
-Playwright MCP 出口 IP 天然就是校园 IP。不需要额外配置，`user_profile.yml` 保持 `proxy_server: null`。
-
-**方式 B：Claude Code 在校外 + 校园 VPN/代理**
-
-启动 MCP 时加 `--proxy-server` 参数让 Playwright 所有请求走校园代理：
-
-```bash
-claude mcp add playwright -- npx -y @playwright/mcp@latest \
-  --proxy-server=http://proxy.university.edu:8080
-```
-
-同时在 `user_profile.yml` 写入 `proxy_server: "http://proxy.university.edu:8080"` 方便 orchestrator 提示。
-
-**注意**：proxy 是 browser-launch-level 配置，MCP server 启动后无法运行时切换。skill 不会自动重启 MCP，只做提示。
+Claude Code 本身必须运行在校园 / 机构认可的 IP 段内。Playwright MCP 是本地子进程，出口 IP 等于 Claude Code 所在主机的 IP。若 Claude Code 不在认可段，IP 登录必然失败，orchestrator 退回用户手工登录模式。
 
 ### 验证流程
 
-orchestrator 无法直接看 Playwright 的出口 IP，用"目标页工作元素能否加载"作为 IP 登录是否生效的验证信号：
+orchestrator 用"目标页工作元素能否加载"作为 IP 登录是否生效的验证信号：
 
 ```
 1. browser_tabs new × 4 → 按 user_profile.yml tabs 映射开 4 个标签页
@@ -84,10 +70,12 @@ orchestrator 无法直接看 Playwright 的出口 IP，用"目标页工作元素
 2. browser_navigate → /advancedSearch/init (每次查询前重置)
 3. browser_evaluate → incopat_inject.js (替换 __QUERY__)
 4. browser_wait_for → 等待 3 秒
-5. browser_evaluate → incopat_sort.js (如需 AD DESC)
+5. browser_evaluate → incopat_sort.js (AD DESC)
 6. browser_wait_for → 等待 2 秒
-7. browser_evaluate → incopat_extract.js (替换 __TOP_N__)
-8. Write → .omc/research/incopat_command/queryN.json
+7. browser_evaluate → incopat_merge_family.js (站内简单同族合并, v1.2.1)
+8. browser_wait_for → 等待 3 秒 (incoPat 服务端重算分页)
+9. browser_evaluate → incopat_extract.js (替换 __TOP_N__, 每行已是族代表)
+10. Write → .omc/research/incopat_command/queryN.json
 ```
 
 ### incoPat 语义检索 (T2)
@@ -97,8 +85,10 @@ orchestrator 无法直接看 Playwright 的出口 IP，用"目标页工作元素
 2. browser_navigate → /semanticSearch/init
 3. browser_evaluate → incopat_semantic_inject.js (替换 __SEMANTIC_TEXT__)
 4. browser_wait_for → 等待 5 秒 (语义检索较慢)
-5. browser_evaluate → incopat_extract.js (替换 __TOP_N__)
-6. Write → .omc/research/incopat_semantic/query1.json
+5. browser_evaluate → incopat_merge_family.js
+6. browser_wait_for → 等待 3 秒
+7. browser_evaluate → incopat_extract.js (替换 __TOP_N__)
+8. Write → .omc/research/incopat_semantic/query1.json
 ```
 
 ### incoPat 抵触申请 (T3)
@@ -111,8 +101,10 @@ orchestrator 无法直接看 Playwright 的出口 IP，用"目标页工作元素
 4. browser_wait_for → 等待 3 秒
 5. browser_evaluate → incopat_sort.js
 6. browser_wait_for → 等待 2 秒
-7. browser_evaluate → incopat_extract.js
-8. Write → .omc/research/incopat_conflict/query1.json
+7. browser_evaluate → incopat_merge_family.js
+8. browser_wait_for → 等待 3 秒
+9. browser_evaluate → incopat_extract.js
+10. Write → .omc/research/incopat_conflict/query1.json
 ```
 
 ### CNKI 高级检索 (T6)
@@ -139,17 +131,37 @@ orchestrator 无法直接看 Playwright 的出口 IP，用"目标页工作元素
 | AN | 申请号 |
 | AP | 申请人 |
 
-## 同族合并数据 (v1.2.1)
+## 同族合并 (v1.2.1)
 
-`incopat_extract.js` 为每条命中新增 3 个字段：
+**直接调用 incoPat 站内的合并功能**, 不做客户端启发式族判定。
+
+实测 2026-04-17: 隧道衬砌相关查询 **512 条专利 → 364 个专利族**, 合并率 ~29%。
+
+### 关键 API
+
+incoPat 结果页暴露全局函数 `window.mergeCongeners(mode, liElement)`:
+
+| mode | 效果 |
+|---|---|
+| 0 | 不合并 (默认) |
+| 1 | 简单同族合并 (默认启用) |
+| 2 | 扩展同族合并 |
+| 3 | DocDB 同族合并 |
+
+`incopat_merge_family.js` 默认走 mode=1 (简单同族合并), 这是 incoPat 推荐、覆盖面最好的选项。
+
+### 字段
+
+合并后 `incopat_extract.js` 返回:
 
 | 字段 | 说明 | 示例 |
 |---|---|---|
-| `an` | 申请号 | `CN202410012345.6` |
-| `family_key` | 同族分组键 (申请号前 10 位) | `CN20241001` |
-| `family_tag` / `family_count` | incoPat 标签原文 + 解析数量 | `中国同族 3` / `3` |
+| `pn` | 族代表公开号 | `CN118570217B` |
+| `an` | 申请号 (跨通道去重用) | `CN202410012345.6` |
+| `family_merged` | 布尔: incoPat 站内已合并 | `true` |
+| `total_text` | 计数原文 | `"364个专利族"` 或 `"共512条"` |
 
-orchestrator 按 `references/phase-b2-merge-rules.md` 用这些字段做同族合并。subagent 只负责抓取, 不判定同族关系。
+orchestrator 只做跨通道同 `pn` / 同 `an` 合并 + Phase A 去重标记, 不做族内分组。详见 `references/phase-b2-merge-rules.md`。
 
 ## 踩坑记录
 

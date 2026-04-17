@@ -1030,22 +1030,14 @@ DOM 操作固化为 7 个独立 JS 脚本（`scripts/playwright/`）。subagent 
 
 **设计原则**：incoPat 和 CNKI 两大付费库都支持基于 IP 段的自动认证——机构/校园 IP 访问时站点后端直接派发登录态 cookie，无需表单、无需密码、无需点按。Phase B.2 的"AI 自主登录"就是让 Playwright 直接利用这个机制。**不做基于账号密码的表单登录**（凭据管理、验证码、风控规则都是坑，得不偿失）。
 
-**三种 IP 场景**：
+**生效前提**：Claude Code（及 Playwright MCP 这个本地子进程）必须运行在校园 / 机构认可的 IP 段内。出口 IP = Claude Code 的 IP，没有代理层可以让"校外客户端假装成校内"——HTTPS + cookie 绑定 + 站点反爬策略使得简单的 HTTP 代理转发不能欺骗 IP 认证。
 
-| 场景 | Playwright 出口 IP | 配置 |
-|---|---|---|
-| Claude Code 跑在校园网内 | 天然是校园 IP | `proxy_server: null`，什么都不用配 |
-| Claude Code 在校外 + 有校园 VPN/代理 | 校园 VPN 出口 | `proxy_server: http://proxy.univ.edu:8080`；启动 MCP 时加 `--proxy-server` 参数 |
-| Claude Code 在校外 + 无代理 | 任意公网 IP | IP 登录必然失败，退回用户手工登录（可让用户通过浏览器开发者工具复制 cookie 继续，但当前版本不支持） |
+**两种场景**：
 
-**启动 MCP 带代理的命令**：
-
-```bash
-claude mcp add playwright -- npx -y @playwright/mcp@latest \
-  --proxy-server=http://proxy.university.edu:8080
-```
-
-Playwright MCP 的代理是 **browser-launch-level** 配置，由 MCP server 启动参数决定，运行时无法切换。skill 只负责在 `user_profile.yml` 里记录这个参数（供用户参考 + orchestrator 提示），不会自动重启 MCP。
+| 场景 | 行为 |
+|---|---|
+| Claude Code 跑在校园/机构 IP 段内 | IP 登录生效，orchestrator 跳过用户提示，直接进入检索 |
+| Claude Code 在其他 IP 段 | IP 登录必然失败，退回用户手工登录（用户在 Playwright 浏览器里自己登录） |
 
 **验证层 —— check_login 脚本**：
 
@@ -1082,41 +1074,69 @@ IP 登录是否真正生效，通过"目标页的工作元素能否加载"验证
 - 不实现 cookie 导入（从用户浏览器拷 cookie）——v1.2.1 先保持简单
 - 不自动切换代理——这是 MCP server 启动级配置，skill 改不动
 
-### 19.2 同族合并落地
+### 19.2 同族合并落地（走 incoPat 站内功能）
 
-**问题**：v1.2 的 `incopat_extract.js` 只把 "中国同族" 当 tag token 过滤掉，根本没抓申请号（AN），也没记录同族数量。orchestrator 的 "→ 合并 → 去重" 步骤没有具体算法，实际执行时只能按 pn 做粗去重，真正的同族合并从未发生。
+**问题**：v1.2 的 `incopat_extract.js` 把 "中国同族" 当 tag token 过滤掉，根本没做任何合并；orchestrator 的 "→ 合并 → 去重" 步骤没有具体算法，族内冗余直接流入 template，同一发明的公开号 + 授权号 + 家族成员会被当成多条独立命中。
 
-**v1.2.1 修复**：
+**错误的第一次修复**：2026-04-17 首版尝试让 orchestrator 自己用 `family_key`（申请号前 10 位）+ 启发式（applicant + AD±7d + title 相似度）做分组。这是在**重造 incoPat 已经做过的轮子**，且启发式规则容易把近似发明错并成同族。
 
-1. **extract 层**：`incopat_extract.js` 新增三字段
-   - `an`: 完整申请号（如 `CN202410012345.6`）
-   - `family_key`: 申请号去标点后前 10 位（如 `CN20241001`）——作为同族分组键
-   - `family_tag` / `family_count`: 解析 "中国同族 N" 或 "全球同族 N" 标签
+**v1.2.1 正确做法 —— 调 incoPat 站内 API**：
 
-2. **orchestrator 层**：新文件 `references/phase-b2-merge-rules.md` 定义完整合并算法
-   - Step 1: 通道内同 pn 去重
-   - Step 2: 跨通道同 pn 合并（取最高评分）
-   - Step 3: 同族合并
-     - 强同族：`family_key` 相同 或 `an` 相同
-     - 弱同族（启发式）：`applicant` 一致 + `ad` ≤ 7 天 + `title` 相似度 ≥ 80%
-     - 保留 `pd` 最晚的条目作为代表
-   - Step 4: Phase A 去重（只打标，不移除）
-   - Step 5: 非专利按 url / title 去重
+incoPat 结果页暴露全局函数 `window.mergeCongeners(mode, li)`，点击页面上"合并同族"下拉的 `#mergeCongeners` LI 项时就是触发它。直接 JS 调用即可，不需要模拟点击下拉展开 → 选项 click 的两步。
 
-3. **文档侧**：SKILL.md 的 orchestrator 协议步骤 7 直接引用 `phase-b2-merge-rules.md`，不再是一行"合并→去重"。
+| mode | 语义 |
+|---|---|
+| 0 | 不合并 |
+| 1 | 简单同族合并（推荐，默认启用） |
+| 2 | 扩展同族合并 |
+| 3 | DocDB 同族合并 |
 
-**为什么同族用 family_key 前 10 位**：CN 专利申请号格式为 `CN YYYYNN NNNNNNN.X`（年份 + 顺序号 + 校验位）。前 10 字符 `CN + 年 + 6 位顺序号` 足以锁定一个申请。族内不同公开号（A → B → C 对应公开→授权→再授权）共享同一 AN，自然共享同一 family_key。这个启发式比让 LLM 自己判断"是否同族"稳定得多，也不需要调外部 family 数据库。
+**脚本 `incopat_merge_family.js`**：
 
-**为什么不做 UI 侧合并同族**：incoPat 有 "合并同族" 按钮，但点了之后每行只显示一个代表，丢掉了对其他族成员的可见性——后续 Phase C Judge 如果想看某个族的最早优先权日就拿不到。保留原始结果 + orchestrator 侧计算代价很低（O(n)），拿到的信息最全。
+```javascript
+const li = Array.from(document.querySelectorAll('[id="mergeCongeners"]'))
+  .filter(el => el.tagName === 'LI')[0];  // 跳过同 ID 的 hidden input
+window.mergeCongeners(1, li);  // 1 = 简单同族合并
+```
+
+（incoPat DOM 有 **2 个元素都叫 `id="mergeCongeners"`**：一个 `<input type="hidden">`（合并状态），一个 `<li onclick="mergeCongeners(1, this)">`（下拉选项）。脚本必须筛 LI，否则会把 input 传进去导致错误。）
+
+**单通道新流程**（incoPat T1/T2/T3）：
+
+```
+inject → wait 3s → sort → wait 2s →
+merge_family (v1.2.1 新增) → wait 3s →
+extract → write JSON
+```
+
+**实测效果**（2026-04-17，隧道衬砌 TIABC + IPC=G06T）：
+
+| 阶段 | #totalCount |
+|---|---|
+| 合并前 | 共 512 条 |
+| 简单同族合并后 | **364 个专利族** |
+| 合并率 | 28.9% |
+
+**`incopat_extract.js` 同步精简**：v1.2.1 首版加的 `family_key`、`family_tag`、`family_count` 启发式字段全部删除，只保留 `an`（申请号）用于 orchestrator 跨通道同申请合并。新增 `family_merged: boolean` 标志来验证站内合并确实生效（`#totalCount` 文本从 "共N条" 变为 "N个专利族"）。
+
+**orchestrator 合并职责**（剩余，详见 `references/phase-b2-merge-rules.md`）：
+
+- Step 1：跨通道同 `pn` 合并（记录 `hit_channels`）
+- Step 2：跨通道同 `an` 合并（兜底，incoPat 内合并后一般不剩）
+- Step 3：Phase A 去重标记（不移除，只打标）
+- Step 4：非专利按 url / title 去重
+
+**不做**：启发式族判定（applicant + AD + title 相似度）—— incoPat 服务端的族规则久经验证，自己写反而容易出错。
 
 ### 19.3 反模式（v1.2.1）
 
 | 反模式 | 后果 |
 |---|---|
 | check_login 用 `.user-info` 类选择器 | incoPat 改 class 命名就失效 |
-| 把同族判定塞给 subagent | 同族是跨通道问题，单通道 subagent 看不到全局，必须 orchestrator 做 |
-| 同族用 IPC 分组 | 同发明多 IPC，不同发明也可能共享 IPC，彻底错 |
-| 弱同族阈值过宽 | title 相似度 < 80% 或 ad 差 > 7 天就合并，会把不同发明错并成一族 |
+| 自己写同族启发式（applicant + AD + title 相似度） | 重造 incoPat 已做过的轮子，且容易把近似发明错并成同族 |
+| 用 `family_key`（申请号前 10 位）分组 | 作为兜底看似合理，但 incoPat 内合并已经覆盖这部分；强行做会叠加误差 |
+| 跳过 merge_family 直接 extract | 族内冗余流入 template，同发明被当多条命中污染评分 |
+| merge_family 对同 ID 的 `<input>` 调用 | DOM 有两个 `id="mergeCongeners"`（input + li），必须筛 LI |
 | 自主登录失败时阻塞 | 任一 tab 失败立刻退回手动模式，不重试不卡住 |
 | 跨通道评分取平均 | 取最高值——高分说明至少一个通道确认强相关，平均会稀释这个信号 |
 
