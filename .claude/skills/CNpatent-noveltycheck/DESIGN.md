@@ -889,4 +889,133 @@ v1.1 仍未解决的已知问题（继续延后）：
 
 ---
 
-以上为 DESIGN.md 草稿 v1.0 + v1.1 补丁。v1.0 章节（§1-16）保留作为历史快照；v1.1 章节（§17）是当前实装版本的权威说明。
+---
+
+## 18. v1.2 Phase B.2 Playwright 自动化（2026-04-17）
+
+本节是 v1.1 之后的增量。v1.1 的 Phase B.2 仍要求用户在 incoPat / CNKI 里手动检索 70-110 分钟；v1.2 把这部分改为 AI 驱动的 Playwright 浏览器自动化，用户仅需登录（~5 分钟）。
+
+### 18.1 动机
+
+2026-04-16 端到端测试用 Playwright MCP 驱动 Chromium 完成了整个 B.2 流程：
+
+| 通道 | 查询数 | 总命中 | 入选 |
+|---|---|---|---|
+| incoPat T1 命令检索 | 4 | 2871 | 21 |
+| incoPat T2 语义检索 | 1 | — | 3 |
+| incoPat T3 抵触申请 | 1 | 22799 | 1 (CN121860589A) |
+| CNKI T6 | 3 | 236 | 7 |
+| Scholar T4 | 3 | — | 5 |
+| arXiv T5 | 2 | — | 5 |
+
+全程用户仅需在 Playwright 浏览器窗口中登录。核心发现：incoPat 的 `#textarea` 是 contentEditable div，需用 InputEvent 注入；选择性 DOM 提取（`#graphicTable .patent_information`）把 20 行结果压缩到 ~3k token（全页 HTML ~50k，压缩率 94%）。
+
+### 18.2 架构变更
+
+v1.1 → v1.2 的关键变化：**所有 6 个检索通道都改为后台 subagent 执行**，主 session 只做派发 + 合并。
+
+```
+Phase B (v1.2)
+│
+├── B.1 AI 自动精读（不变）
+│
+├── B.2 用户登录（~5 分钟）
+│   Playwright 启动浏览器 → 用户开 4 标签页 + 登录 → 确认
+│
+├── B.2 AI 后台 subagent 自动检索（6 通道并行）
+│   ┌─ Playwright subagent ──────────────────────────┐
+│   │  T1-agent: incoPat 命令检索 × 3-4 条 (tab 0)   │
+│   │  T2-agent: incoPat 语义检索 × 1 条  (tab 1)    │
+│   │  T3-agent: incoPat 抵触申请 × 1 条  (tab 2)    │
+│   │  T6-agent: CNKI 高级检索 × 2-3 条   (tab 3)    │
+│   └────────────────────────────────────────────────┘
+│   ┌─ WebSearch subagent ───────────────────────────┐
+│   │  T4-agent: Google Scholar × 2-3 条             │
+│   │  T5-agent: arXiv × 2 条                       │
+│   └────────────────────────────────────────────────┘
+│   每个 subagent 独占一个 tab/通道，写 JSON 后返回摘要
+│
+├── B.2 合并
+│   orchestrator 读 JSON → 评分 → 去重 → 写 template
+│
+└── → Phase C（Judge 逻辑不变）
+```
+
+### 18.3 三层分离架构
+
+| 层 | 职责 | 产物 |
+|---|---|---|
+| Guide agent | 读 Phase A → 构造检索表达式 | 执行计划（query expressions） |
+| scripts/playwright/*.js | 固化 DOM 注入/提取模式 | 可复用的 JS 脚本 |
+| 后台 subagent | 读执行计划 + 读脚本 → 驱动 Playwright | JSON 结果文件 |
+| orchestrator（主 session） | 派发 subagent + 读 JSON + 合并评分 | 填好的 template |
+
+DOM 操作固化为 7 个独立 JS 脚本（`scripts/playwright/`）。subagent 通过 Read 读取脚本 → 替换占位符 → `browser_evaluate(scriptContent)` 执行。脚本使用 `() => { ... }` 格式（Playwright MCP 要求的箭头函数格式）。
+
+### 18.4 Playwright DOM 模式（关键发现）
+
+**incoPat**：
+- 命令检索输入：`#textarea`（contentEditable div），需 InputEvent 注入
+- 搜索按钮：`input.retrieval`，init 页 2 个可见（btns[1] = 命令检索），结果页 1 个可见
+- 结果提取：`#graphicTable .patent_information`，字段从 innerText 正则提取
+- 总数：`#totalCount`（文本 "共N条"）
+- 排序：`#sortText` → `#AD_DESC` → `input.retrieval[value*="确定"]` 可见按钮
+- 语义检索：`#querytext`（标准 textarea），`#semanticButton`
+- AD 日期范围：正确语法 `AD="YYYYMMDD,YYYYMMDD"`
+
+**CNKI**：
+- 输入：`textarea.textarea-major`
+- 搜索：`input.btn-search`
+- SU= 语法需拆短词（长词组分词差）
+- 可能出现滑块验证码（用户手动处理）
+
+### 18.5 降级策略
+
+| 触发条件 | 行为 |
+|---|---|
+| `playwright.mcp_available: false` | 直接走 v1.1 用户手动路径 |
+| `mcp_available: true` 但运行时不可用 | 自动检测 → 降级 + 警告 |
+| 某个通道执行失败 | 该通道降级为用户手动 + 其他通道继续 |
+
+降级由 `user_profile.yml` 的 `playwright:` 配置段控制。
+
+### 18.6 token 预算
+
+| 操作 | 预估 token |
+|---|---|
+| 单次注入 + 提取 20 行 | ~3-4k |
+| 全页 HTML（未优化） | ~50k |
+| 压缩率 | ~94% |
+| 6 通道 × 平均 2 查询 | ~30-40k 总计 |
+
+### 18.7 对文件的影响
+
+| 文件 | 改动 |
+|---|---|
+| `SKILL.md` | Phase B.2 节重写 + 暂停点重写 + 新前置依赖 |
+| `agents/cnpatent-noveltycheck-guide.md` | Steps 4-8 改为双模输出（Playwright 执行指令 / v1.1 用户卡片） |
+| `scripts/playwright/*.js`（新增） | 7 个 DOM 操作脚本 + README |
+| `user_profile.yml` | 新增 `playwright:` 配置段 |
+| `agents/cnpatent-noveltycheck-judge.md` | 步骤 1 验证微调 |
+| `references/templates.md` | B.2 自动填写标记 |
+
+### 18.8 向后兼容
+
+- `5_verified_outline.md` schema **不变** — CNpatent 下游完全不受影响
+- `4_manual_search_template.md` schema **不变** — 字段相同，仅填写者从用户变为 AI
+- Phase C Judge 判断逻辑 **不变**
+- `user_profile.yml` **追加** playwright 段 — 老配置无此段时自动降级
+
+### 18.9 踩坑记录
+
+1. incoPat `AD<=YYYYMMDD` 和 `AD=[date,date]` 触发字符位置解析错误 → 正确语法 `AD="YYYYMMDD,YYYYMMDD"`
+2. incoPat 结果页 `input.retrieval` 只 1 个可见（init 页有 2 个）→ 脚本已处理两种情况
+3. incoPat 每次新查询前必须 `browser_navigate` 回 `/advancedSearch/init` 重置
+4. CNKI `SU='路面病害'` 返回 0 条 → 拆成 `(SU='路面' OR SU='隧道') AND (SU='病害' OR SU='裂缝')`
+5. CNKI Cookie 同意遮罩拦截点击 → `cnki_dismiss_overlay.js` 先关闭
+6. CNKI 滑块验证码无法自动化 → 用户手动处理
+7. Playwright MCP `browser_evaluate` 要求 `() => { ... }` 箭头函数格式（非 IIFE）
+
+---
+
+以上为 DESIGN.md v1.0 + v1.1 补丁 + v1.2 补丁。v1.0 章节（§1-16）为历史快照；v1.1（§17）和 v1.2（§18）是当前实装版本的权威说明。

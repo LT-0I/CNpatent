@@ -244,6 +244,8 @@ Guide agent 生成 `4_manual_search_template.md` 时使用。
 - 命中总数 (去同族后): <数字>
 - 详读篇数: <数字>
 - 总耗时: <分钟>
+- B.2 执行模式: Playwright 自动化 / 用户手动
+- Playwright 原始数据 (自动化时): .omc/research/<channel>/query*.json
 
 ---
 

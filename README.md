@@ -9,7 +9,7 @@
 ```
 CNpatent-noveltycheck (唯一入口)
   Phase A  自动免费库筛查 + 大纲生成
-  Phase B  B.1 AI 自动精读公开资源 + B.2 用户人工付费库核查
+  Phase B  B.1 AI 自动精读 + B.2 AI Playwright 自动化检索 (用户仅登录 5 分钟)
   Phase C  三步法创造性判断 + 三色灯决策
       |
       | 绿灯 → 5_verified_outline.md
@@ -58,7 +58,8 @@ claude
 Claude 会自动触发 CNpatent-noveltycheck skill，引导你完成新颖性初筛 + 写作全流程。
 
 **用户需要手动操作的环节**：
-1. Phase B.2 — 在 incoPat 等付费库做人工核查（约 60-90 分钟）
+1. Phase B.2 — 在 Playwright 浏览器中登录 incoPat 和 CNKI（约 5 分钟），AI 自动完成检索
+   - 若未安装 Playwright MCP，降级为手动模式（约 60-90 分钟）
 2. 确认绿灯后自动进入写作，无需额外交互
 
 ### 3. 依赖 Skill

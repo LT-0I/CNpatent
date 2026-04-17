@@ -28,6 +28,23 @@ description: >
 
 **为什么这样设计**：前置查新关卡防止 AI 基于参考文献编造"创新点"写出实际上已被他人申请的专利。写完整篇专利后才发现撞车，成本远大于前置筛查。
 
+### Playwright MCP（可选但推荐）
+
+Phase B.2 支持两种模式：
+
+| 模式 | 依赖 | 用户时间 | AI 时间 |
+|---|---|---|---|
+| Playwright 自动化（默认） | Playwright MCP server | ~5 min（登录） | ~30 min |
+| 用户手动（降级） | 无 | 70-110 min | 0 |
+
+安装 Playwright MCP：
+```bash
+claude mcp add playwright -- npx -y @playwright/mcp@latest
+```
+
+若已安装：Phase B.2 由 6 个 AI 后台 subagent 并行完成（用户仅登录）。
+若未安装：降级为 v1.1 用户手动模式。配置在 `user_profile.yml` 的 `playwright:` 段。
+
 ## Quick Start
 
 调用本 skill 时，先做状态检测决定从哪一步开始：
@@ -151,9 +168,26 @@ v1.1 把 Phase B 拆成两个子阶段。背景、动机和完整设计见 [DESI
 
 精读产物直接写入 `4_manual_search_template.md` 的"命中 #N · B.1 全文核实"字段。
 
-**Phase B.2 —— 用户人工付费库**（必做，用户执行）
+**Phase B.2 —— AI Playwright 自动化检索**（必做，AI 后台 subagent 执行，用户仅需登录）
 
-v1.0 原有的 incoPat 检索 + 抵触申请检索 + CNKI 中文学位论文工作流**不变**。这是 AI 无法做的工作（incoPat 需要登录态，CNKI 同样）。
+v1.2 把原来的用户手动付费库检索改为 AI 驱动的 Playwright 浏览器自动化。用户只需在 Playwright 打开的浏览器中完成登录（~5 分钟），AI 后台 subagent 负责查询注入、结果提取、评分和模板填写。
+
+**6 通道全部后台 subagent 并行**：
+
+| 通道 | Tab | 执行者 | 工具 |
+|---|---|---|---|
+| incoPat 命令检索 | T1 (tab 0) | 后台 subagent | Playwright |
+| incoPat 语义检索 | T2 (tab 1) | 后台 subagent | Playwright |
+| incoPat 抵触申请 | T3 (tab 2) | 后台 subagent | Playwright |
+| CNKI 高级检索 | T6 (tab 3) | 后台 subagent | Playwright |
+| Google Scholar | — | 后台 subagent | WebSearch |
+| arXiv | — | 后台 subagent | WebSearch |
+
+主 session 不执行任何 Playwright 操作，只负责派发和合并。DOM 操作脚本固化在 `scripts/playwright/*.js`。
+
+**前置依赖**：Playwright MCP server（`claude mcp add playwright -- npx -y @playwright/mcp@latest`）
+
+**降级策略**：若 Playwright MCP 不可用，回退到 v1.1 用户手动模式（Guide 生成操作卡片，用户手动检索 70-110 分钟）。
 
 **Agent**：`cnpatent-noveltycheck-guide`（角色文件 [agents/cnpatent-noveltycheck-guide.md](agents/cnpatent-noveltycheck-guide.md)）
 
@@ -178,31 +212,65 @@ outputs/[方案名]/
 
 **orchestrator 在 Phase B.1 的执行协议**：Guide agent 返回后，orchestrator 读 `3_manual_search_guide.md` 的第一大节，对每张 B.1 卡片 `Agent` 工具派发一个子 agent（最多 10 张卡片并行），子 agent 执行后把结果写入 `4_manual_search_template.md` 的对应字段。Phase B.1 总耗时约 15-30 分钟 wall clock（并行）。完成后才进入 B.2 的"人类工作时段"提示。
 
+**orchestrator 在 Phase B.2 的执行协议**（Playwright 模式）：
+
+1. 检测 Playwright MCP 是否可用
+   - 可用 → Playwright 模式
+   - 不可用 → 降级为 v1.1 用户手动模式（生成操作卡片，暂停等用户手动检索）
+2. 启动 Playwright 浏览器
+3. 提示用户登录（见下方"人类工作时段"）
+4. 用户确认后，读 Guide 输出的 B.2 执行计划（`3_manual_search_guide.md` 第二大节）
+5. 在一条消息里同时派发 6 个后台 subagent：
+   - 每个 Playwright subagent 收到：该通道的执行指令 + 脚本路径 + 输出路径 + 区别特征列表
+   - 每个 WebSearch subagent 收到：查询表达式 + 输出路径
+   - 每个 subagent 独立完成检索并写入 `.omc/research/<channel>/queryN.json`
+6. 所有 subagent 完成后，orchestrator 读 JSON 结果 → 合并 → 相关性评分 → 去重 → 写入 `4_manual_search_template.md` B.2 字段
+
 **约束**（不变）：
 - 检索式必须基于 Phase A 的关键词块 + IPC 构造，不得凭空编造
 - 每个卡片必须给出停止准则
 - 回填模板的字段必须对齐 Phase C judge 的解析格式
 - B.1 子 agent 的精读结果必须附原文段落号或源码路径行号，无锚点的判定不被 Phase C Judge 采信
 
-### ⏸ 人类工作时段（仅 Phase B.2）
+### ⏸ 人类工作时段
 
-Phase B.1 执行完毕后，B.2 卡片已在 `3_manual_search_guide.md` 第二大节就绪。skill **必须停下**，在聊天窗口输出类似以下提示：
+**Playwright 模式（v1.2 默认）**：
+
+Phase B.1 执行完毕后，skill 输出：
+
+```
+✅ Phase B.1 完成（AI 精读）。
+
+Phase B.2 需要你在浏览器中登录（~5 分钟）：
+1. Playwright 已打开 Chromium 浏览器窗口
+2. 请打开 4 个标签页：
+   - Tab 0: incoPat 高级检索 (https://www.incopat.com/advancedSearch/init)
+   - Tab 1: incoPat 语义检索 (https://www.incopat.com/semanticSearch/init)
+   - Tab 2: incoPat 高级检索 (https://www.incopat.com/advancedSearch/init)（抵触申请用）
+   - Tab 3: CNKI 高级检索 (https://kns.cnki.net/kns8s/AdvSearch)
+3. 在 incoPat 和 CNKI 完成登录（校园 IP 应自动登录）
+4. 完成后告诉我 "标签页已开好"
+
+AI 将自动完成所有检索（约 30 分钟），你可以离开。
+```
+
+用户确认后，orchestrator 立即开始 B.2 自动化，无需再等。
+
+**用户手动模式（v1.1 降级）**：
+
+若 Playwright 不可用，Phase B.1 完成后输出 v1.1 的原始提示：
 
 ```
 ✅ Phase B.1 完成（AI 精读）。Phase B.2 需要你在付费库手动完成：
 
-1. 打开 outputs/[方案名]/3_manual_search_guide.md，查看第二大节 "Phase B.2 用户人工库卡片"
+1. 打开 outputs/[方案名]/3_manual_search_guide.md，查看第二大节 "Phase B.2 用户人工核查卡片"
 2. 按 incoPat / CNKI 操作卡片执行检索
 3. 将命中记录填入 outputs/[方案名]/4_manual_search_template.md 的 B.2 字段
 4. 预计耗时 60-90 分钟
 5. 完成后告诉我 "查新完成" 或 "人工核查完成"，我会继续 Phase C
-
-**B.1 已经自动完成**，具体见 template 的 B.1 字段。你可以先看一眼 B.1 结果对 Phase A 的疑似命中做了哪些核实或证伪。
-
-**请不要关闭当前会话** —— 但如果关了也没关系，回来后 skill 会从工作目录状态续跑。
 ```
 
-然后 skill 本次调用结束。**不要**自动进 Phase C（此时 B.2 字段还没被填好，Phase C 输入不完整）。
+然后 skill 本次调用结束。
 
 ### Phase C — 结果分析 + 决策
 
@@ -340,6 +408,15 @@ outputs/[方案名]/
 │   └── 6_implementation.md
 ├── [专利名称]_专利技术交底书.docx       # 最终交付
 └── [专利名称]_全套AI生图提示词.md     # 附图提示词
+│
+│ Playwright 原始数据（v1.2）──
+.omc/research/
+├── incopat_command/query*.json   # incoPat 命令检索原始结果
+├── incopat_semantic/query*.json  # incoPat 语义检索原始结果
+├── incopat_conflict/query*.json  # incoPat 抵触申请原始结果
+├── cnki/query*.json              # CNKI 原始结果
+├── scholar/query*.json           # Scholar 原始结果
+└── arxiv/query*.json             # arXiv 原始结果
 ```
 
 **设计原则**：
@@ -405,6 +482,7 @@ non_patent:
 - [references/cn-patent-law.md](references/cn-patent-law.md) 新颖性 + 创造性 + 宽限期
 - [references/templates.md](references/templates.md) 所有模板（操作卡片 / 回填 / verified_outline）
 - [agents/README.md](agents/README.md) 角色文件约定（同 CNpatent）
+- [scripts/playwright/README.md](scripts/playwright/README.md) Playwright 自动化脚本 + DOM 模式 + 踩坑记录
 
 ## 下游 skill
 

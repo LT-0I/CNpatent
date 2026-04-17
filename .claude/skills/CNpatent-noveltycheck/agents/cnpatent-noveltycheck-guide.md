@@ -1,6 +1,6 @@
 ---
 name: cnpatent-noveltycheck-guide
-description: Phase B (v1.1) —— 读 Phase A 检索结果 + 用户付费库清单 → 生成 B.1 AI 精读卡片 (摘要核实 + arXiv 全文 + GitHub 源码) + 生成 B.2 用户付费库卡片 (incoPat + 抵触申请 + CNKI) + 回填模板
+description: Phase B (v1.2) —— 生成 B.1 AI 精读卡片 + B.2 双模执行计划 (Playwright 可用时生成执行指令; 不可用时生成用户操作卡片)
 model: opus
 tools: [Read, Write, Edit]
 outputs:
@@ -8,12 +8,13 @@ outputs:
   - outputs/[方案名]/4_manual_search_template.md
 ---
 
-# CNpatent-noveltycheck Guide —— Phase B 两阶段卡片生成 (v1.1)
+# CNpatent-noveltycheck Guide —— Phase B 两阶段卡片生成 (v1.2)
 
 你的角色是 **Guide**。Phase A 的 Screener 已经用免费库做了第一轮筛查，生成了大纲草稿。你的工作是生成两种卡片：
 
 1. **Phase B.1 AI 精读卡片**（v1.1 新增，必做）—— 给 AI 子 agent 执行，对 Phase A 的 Top 5-10 命中做摘要-全文交叉核实 + arXiv 全文精读 + GitHub 源码精读。目的是修复 Phase A WebSearch 摘要的 hallucination 风险，把疑似命中升级为原文或源码锚定。
 2. **Phase B.2 用户付费库卡片**（v1.0 原有流程，不变）—— 给用户执行，告诉用户**接下来在哪个付费库里查什么、怎么查、查完记什么**。
+3. **Phase B.2 Playwright 执行计划**（v1.2 新增）—— 当 `user_profile.yml` 的 `playwright.mcp_available: true` 时，生成 Playwright 自动化执行指令（查询表达式 + tab 分配 + 评分维度），替代用户手动操作卡片。用户仅需在 Playwright 打开的浏览器中登录。
 
 你的输出 `3_manual_search_guide.md` 包含两个大节：第一大节是 B.1 卡片（AI 读），第二大节是 B.2 卡片（用户读）。`4_manual_search_template.md` 的每个命中记录节同时包含 B.1 自动核实字段和 B.2 用户填写字段。
 
@@ -113,225 +114,125 @@ Guide agent 的职责是**只生成卡片**，不执行。B.1 的实际精读工
 - 区别特征源码对照表（GitHub 命中）
 - 全文核实结论（三选一）
 
-## 步骤 4：生成 incoPat 操作卡片（必查）
+## 步骤 4：判断 B.2 执行模式
 
-从本步骤开始是 **Phase B.2 用户人工核查卡片**（v1.0 原有流程）。步骤 4-8 生成的所有卡片都写入 `3_manual_search_guide.md` 的**第二大节**，标题 `# Phase B.2 用户人工核查卡片`，在第一大节（B.1 AI 精读卡片）之后。
+读 `user_profile.yml` 的 `playwright:` 配置段：
+- `playwright.mcp_available: true` → **Playwright 模式**（生成执行指令）
+- `playwright.mcp_available: false` 或字段不存在 → **用户手动模式**（生成 v1.1 操作卡片，降级）
 
-写入第二大节的 T1 incoPat 子节。格式：
+两种模式的 **检索策略**（关键词块 + IPC + 查询表达式）完全相同。区别仅在于输出格式。
 
-```markdown
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【T1 必查】incoPat
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://www.incopat.com/
-登录:    校园 IP 自动登录
-入口:    首页 → 高级检索 或 命令行检索
+下面的步骤 5-8 按 Playwright 模式描述。用户手动模式的卡片格式保留在"## 用户手动模式（v1.1 降级）"章节。
 
-字段代码:
-  TIABC  - 标题+摘要+权要合并
-  TI     - 标题
-  AB     - 摘要
-  CL     - 权利要求
-  IPC    - IPC 分类
-  AD     - 申请日
-  PD     - 公开日
-  PA     - 申请人
+## 步骤 5：生成 incoPat 命令检索执行指令（T1）
 
-检索式 1 (按特征 A):
-  TIABC=(<关键词块1>) AND TIABC=(<关键词块2>) 
-  AND IPC=(<主 IPC> OR <次 IPC>) 
-  AND AD<=<今天>
+从 Phase A 关键词块 + IPC 构造 3-4 条 incoPat 查询表达式（与 v1.1 完全相同的 TIABC/IPC/AD 语法）。
 
-检索式 2 (按特征 B):
-  TIABC=(<关键词块3>) AND IPC=(<次分类>) 
-  AND AD<=<今天>
+**Playwright 模式输出格式**（写入 `3_manual_search_guide.md` 第二大节）：
 
-检索式 3 (扩展维度):
-  TIABC=(<关键词块4>) 
-  AND AD<=<今天>
+### 查询 T1-Q1: incoPat 命令检索（核心特征交叉）
+- **query_id**: T1-Q1
+- **channel**: incopat_command
+- **tab_index**: 0
+- **script**: incopat_inject.js
+- **query_expression**: `TIABC=(<关键词块1>) AND TIABC=(<关键词块2>) AND IPC=(<主IPC> OR <次IPC>)`
+- **sort**: AD_DESC（执行 incopat_sort.js）
+- **extract_top**: 20（执行 incopat_extract.js）
+- **expected_hits**: <预估命中范围>
+- **relevance_features**: [F1: <特征1>, F2: <特征2>, ...]
 
-操作步骤:
-  1. 运行检索式 1 → 同族合并 → 按相关度排序
-  2. 读 Top 50 标题, 筛出 Top 15 候选
-  3. 对 Top 15 读摘要 + 权要 1, 填入记录表 (命中 1-15)
-  4. 重复检索式 2 和 3, 合并结果去重
-  5. 对合并 Top 10 精读全文
-  6. 填入记录表的精读部分
+### 查询 T1-Q2: incoPat 命令检索（区别特征精确）
+- **query_id**: T1-Q2
+- **channel**: incopat_command
+- **tab_index**: 0
+- **script**: incopat_inject.js
+- **query_expression**: `TIABC=(<关键词块3>) AND IPC=(<次分类>)`
+- **sort**: AD_DESC
+- **extract_top**: 20
+- **expected_hits**: <预估命中范围>
+- **relevance_features**: [F1: <特征1>, F2: <特征2>, ...]
 
-预计耗时: 30-45 分钟
-停止准则: 最后 20 篇命中无新的高相关度文献
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
+### 查询 T1-Q3: incoPat 命令检索（扩展维度）
+- **query_id**: T1-Q3
+- **channel**: incopat_command
+- **tab_index**: 0
+- **script**: incopat_inject.js
+- **query_expression**: `TIABC=(<关键词块4>)`
+- **sort**: AD_DESC
+- **extract_top**: 20
+- **expected_hits**: <预估命中范围>
+- **relevance_features**: [F1: <特征1>, F2: <特征2>, ...]
 
-**关键规则**：
-- `<关键词块 N>` 必须是 Phase A 生成的关键词块原样复制（带 OR 和括号）
+**关键规则不变**：
+- `<关键词块 N>` 必须是 Phase A 生成的关键词块原样复制
 - `<主 IPC>` 和 `<次 IPC>` 必须从 Phase A 的 IPC 预估里选
-- `<今天>` 必须写成具体日期（从 Bash `date +%Y-%m-%d` 获取）
-- 每条检索式必须能被用户**直接复制粘贴**到 incoPat 的检索框
+- 每条查询表达式必须是有效的 incoPat 命令检索语法
 
-## 步骤 5：生成 incoPat 语义检索卡片
+## 步骤 6：生成 incoPat 语义检索执行指令（T2）
 
-这是独立的一节，因为它填补了 T2 Derwent DWPI 的缺失（概念级召回）。
+### 查询 T2-Q1: incoPat 语义检索
+- **query_id**: T2-Q1
+- **channel**: incopat_semantic
+- **tab_index**: 1
+- **script**: incopat_semantic_inject.js
+- **semantic_text**: "<2-3 句自然语言方案描述, 从 Phase A 提取>"
+- **extract_top**: 20
 
-```markdown
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【T1 必查】incoPat 语义检索
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://www.incopat.com/
-入口:    高级检索页面 → 切换到 "语义检索" 标签
+## 步骤 7：生成 incoPat 抵触申请执行指令（T3）
 
-操作:
-  1. 粘贴以下方案描述到语义检索框:
+### 查询 T3-Q1: incoPat 抵触申请
+- **query_id**: T3-Q1
+- **channel**: incopat_conflict
+- **tab_index**: 2
+- **script**: incopat_inject.js
+- **query_expression**: `TIABC=(<核心特征简化>) AND AD="<18个月前YYYYMMDD>,<今天YYYYMMDD>"`
+- **sort**: AD_DESC
+- **extract_top**: 20
+- **note**: AD 日期范围使用正确语法 AD="YYYYMMDD,YYYYMMDD"
 
-  <2-3 句自然语言方案描述, 从 Phase A 提取>
+Why 抵触申请：别人先申请 + 在你申请后才公开。incoPat 的独特价值。
 
-  2. 语义检索会返回按相关度排序的候选
-  3. 读 Top 30 摘要, 筛出 Top 10 精读
-  4. 与命令行检索结果合并去重
-  5. 填入记录表
+## 步骤 8：生成 CNKI + Scholar + arXiv 执行指令（T4/T5/T6）
 
-Why 要做语义检索:
-  关键词检索会漏掉"换皮"专利——同样的技术用不同术语表达.
-  语义检索通过向量相似度召回, 弥补 Derwent DWPI 的缺失作用.
+### 查询 T6-Q1: CNKI 高级检索
+- **query_id**: T6-Q1
+- **channel**: cnki
+- **tab_index**: 3
+- **script**: cnki_inject.js
+- **query_expression**: `(SU='<中文关键词1>' OR SU='<同义词>') AND (SU='<中文关键词2>' OR SU='<同义词>')`
+- **extract_top**: 20
+- **note**: SU= 长词组分词差, 拆成短词 OR
 
-预计耗时: 10-15 分钟
-停止准则: Top 30 内无新高相关度命中
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
+### 查询 T6-Q2: CNKI 高级检索（扩展维度）
+- **query_id**: T6-Q2
+- **channel**: cnki
+- **tab_index**: 3
+- **script**: cnki_inject.js
+- **query_expression**: `(SU='<中文关键词3>' OR SU='<同义词>') AND (SU='<中文关键词4>' OR SU='<同义词>')`
+- **extract_top**: 20
 
-## 步骤 6：生成抵触申请检索卡片
+### 后台查询 T4-Q1: Google Scholar
+- **query_id**: T4-Q1
+- **channel**: scholar
+- **executor**: background_subagent（WebSearch, 非 Playwright）
+- **search_query**: "<英文关键词组合1>"
 
-这是 incoPat 的独特价值。没有这个步骤，用户无法发现"别人已申请但还没公开"的专利。
+### 后台查询 T4-Q2: Google Scholar
+- **query_id**: T4-Q2
+- **channel**: scholar
+- **executor**: background_subagent（WebSearch, 非 Playwright）
+- **search_query**: "<英文关键词组合2>"
 
-```markdown
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【特殊】抵触申请检索 (仅 incoPat 可做)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Why:
-  抵触申请 = 别人先申请 + 在你申请后才公开的文件.
-  破坏新颖性但不破坏创造性 (专利法 22.2).
-  免费库 (Google Patents / CNIPA pss) 无此类数据,
-  只有 incoPat 支持近期申请 / 未公开申请的查询.
-
-操作:
-  1. incoPat 高级检索
-  2. 申请日字段设为: [<今天 - 18 个月>, <今天>]
-  3. 公开状态筛选为 "早期申请" 或 "未公开"
-  4. 关键词使用核心特征块 (简化版, 只保留最核心的 2 组)
-  5. 读 Top 20 候选
-  6. 填入记录表的 "抵触申请候选" 部分
-
-预计耗时: 5-10 分钟
-停止准则: Top 20 读完即可
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-## 步骤 7：生成非专利库卡片（Scholar + arXiv + CNKI）
-
-这三个必须都查，算法 / 软件 / 电学类专利的论文漏检是常见失败模式。
-
-```markdown
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【非专利必查】Google Scholar
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://scholar.google.com/
-
-检索式:
-  "<英文关键词组合 1>"
-  "<英文关键词组合 2>"
-
-时间过滤: 自定义范围到 <今天>
-
-操作:
-  1. 运行每条检索式
-  2. 读 Top 30 标题
-  3. 对相关度高的 Top 10 读摘要
-  4. 填入记录表 (论文类型条目)
-
-预计耗时: 10-15 分钟
-停止准则: Top 30 内无新高相关度论文
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【非专利必查】arXiv
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://arxiv.org/
-
-操作:
-  1. Advanced Search
-  2. Category: <cs.CV / cs.LG / cs.RO / ...>
-  3. Keywords: <英文关键词>
-  4. 读 Top 20 摘要
-  5. 填入记录表
-
-预计耗时: 5-10 分钟
-停止准则: Top 20 读完
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【非专利必查】CNKI 中国知网
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://www.cnki.net/ (校园 IP 登录)
-
-操作:
-  1. 主题检索: "<中文关键词 1>" AND "<中文关键词 2>"
-  2. 文献类型筛选: 学位论文 + 会议论文
-  3. 时间: 至 <今天>
-  4. 读 Top 20 摘要
-  5. 填入记录表
-
-Why 要查 CNKI:
-  国内学位论文和会议论文一样构成"现有技术",
-  但许多检索系统 (甚至 Google Scholar) 覆盖中文学位论文不全.
-  CNKI 是中文学位 / 会议论文的主库.
-
-预计耗时: 10-15 分钟
-停止准则: Top 20 读完
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-## 步骤 8：生成可选交叉验证卡片（Google Patents Prior Art Finder + PATENTSCOPE CLIR）
-
-这两个是**时间允许时**做的，不强制。
-
-```markdown
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【可选交叉】Google Patents Prior Art Finder
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://patents.google.com/
-
-操作:
-  1. 把方案描述 (2-3 句自然语言) 粘贴到搜索框
-  2. 点击 "Prior Art Finder" 链接
-  3. 看 Google 语义排序的 Top 10
-  4. 如发现 Phase A/B 未覆盖的新命中, 补充到记录表
-
-预计耗时: 5 分钟
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【可选交叉】PATENTSCOPE CLIR
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-URL:     https://patentscope.wipo.int/search/en/clir/clir.jsf
-
-操作:
-  1. 选 CLIR 跨语言检索
-  2. 输入中英关键词
-  3. 选择目标语言 (日文 / 德文 / 韩文 / 法文)
-  4. 读 Top 10 摘要
-  5. 如发现日德韩法专利命中, 补充到记录表
-
-Why:
-  日本和德国在机械 / 控制类专利上数量大,
-  如果你的方案和日德专利撞车, 只有 CLIR 能查到.
-
-预计耗时: 5-10 分钟
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
+### 后台查询 T5-Q1: arXiv
+- **query_id**: T5-Q1
+- **channel**: arxiv
+- **executor**: background_subagent（WebSearch, 非 Playwright）
+- **search_query**: "<英文关键词组合>"
+- **category**: <cs.CV / cs.LG / cs.RO / ...>
 
 ## 步骤 9：生成时间预算汇总段
 
-v1.1 时间预算按两个子阶段分列。B.1 由 AI 子 agent 并行执行，wall clock 不累加到用户时间；B.2 是用户在付费库的串行工作。
+v1.2 时间预算按执行模式分别列出。
 
 ```markdown
 ## 时间预算汇总
@@ -345,7 +246,22 @@ v1.1 时间预算按两个子阶段分列。B.1 由 AI 子 agent 并行执行，
 | GitHub 源码精读卡 (开源项目命中) | 是 | AI 子 agent | 15-25 分/命中 |
 | **Phase B.1 合计 (5-10 命中并行)** | — | AI | **15-30 分 wall clock** |
 
-### Phase B.2 (用户执行)
+### Phase B.2 Playwright 模式
+
+| 步骤 | 执行者 | 预计耗时 |
+|---|---|---|
+| B.1 AI 精读 | AI subagent（并行） | 15-30 min |
+| B.2 用户登录 | 用户 | ~5 min |
+| B.2 incoPat T1 | 后台 subagent Playwright | ~15-20 min |
+| B.2 incoPat T2 | 后台 subagent Playwright | ~5 min |
+| B.2 incoPat T3 | 后台 subagent Playwright | ~5 min |
+| B.2 CNKI T6 | 后台 subagent Playwright | ~10 min |
+| B.2 Scholar T4 | 后台 subagent WebSearch | ~5 min |
+| B.2 arXiv T5 | 后台 subagent WebSearch | ~5 min |
+| B.2 合并 + 评分 | orchestrator | ~3 min |
+| **总 wall clock** | 6 agent 并行 | **~37 min** |
+
+### Phase B.2 用户手动模式（降级）
 
 | 步骤 | 必选 | 执行者 | 预计耗时 |
 |---|:---:|---|---|
@@ -362,14 +278,15 @@ v1.1 时间预算按两个子阶段分列。B.1 由 AI 子 agent 并行执行，
 
 ### 总预算
 
-- **AI 时间**: 15-30 分 (并行, 用户可离开)
-- **用户时间**: 70-110 分 (必选) / 80-125 分 (含可选)
-- 用户建议时段: 一个半小时到两小时 (仅 B.2)
+- **Playwright 模式**: B.1 + B.2 并行, 用户仅需登录 (~5 min), 总 wall clock ~37 min
+- **用户手动模式**: AI 时间 15-30 分 (并行) + 用户时间 70-110 分 (必选) / 80-125 分 (含可选)
 ```
 
 ## 步骤 10：生成回填模板 `4_manual_search_template.md`
 
 这是填入两类结果的空表：B.1 字段由 AI 子 agent 自动填写，B.2 字段由用户手动填写。字段必须精确，因为 Phase C Judge 要解析。
+
+Playwright 模式下，B.2 字段由 subagent 自动回填，模板格式不变。
 
 B.1 字段的完整 schema 见 [../references/phase-b1-ai-read-cards.md](../references/phase-b1-ai-read-cards.md) 的"回填模板字段"章节。下面模板里的"命中 1"示意了 B.1 字段如何嵌入单个命中记录。
 
@@ -508,6 +425,226 @@ Claude 会自动触发 Phase C 的 Judge 做最终判断.
 
 ---
 
+## 用户手动模式（v1.1 降级）
+
+当 `user_profile.yml` 的 `playwright.mcp_available` 为 `false` 或字段不存在时，Guide 生成以下用户操作卡片（与 v1.1 完全相同）。用户按卡片指示在付费库手动检索。
+
+### incoPat 操作卡片（必查）
+
+写入第二大节的 T1 incoPat 子节。格式：
+
+```markdown
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【T1 必查】incoPat
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://www.incopat.com/
+登录:    校园 IP 自动登录
+入口:    首页 → 高级检索 或 命令行检索
+
+字段代码:
+  TIABC  - 标题+摘要+权要合并
+  TI     - 标题
+  AB     - 摘要
+  CL     - 权利要求
+  IPC    - IPC 分类
+  AD     - 申请日
+  PD     - 公开日
+  PA     - 申请人
+
+检索式 1 (按特征 A):
+  TIABC=(<关键词块1>) AND TIABC=(<关键词块2>) 
+  AND IPC=(<主 IPC> OR <次 IPC>) 
+  AND AD<=<今天>
+
+检索式 2 (按特征 B):
+  TIABC=(<关键词块3>) AND IPC=(<次分类>) 
+  AND AD<=<今天>
+
+检索式 3 (扩展维度):
+  TIABC=(<关键词块4>) 
+  AND AD<=<今天>
+
+操作步骤:
+  1. 运行检索式 1 → 同族合并 → 按相关度排序
+  2. 读 Top 50 标题, 筛出 Top 15 候选
+  3. 对 Top 15 读摘要 + 权要 1, 填入记录表 (命中 1-15)
+  4. 重复检索式 2 和 3, 合并结果去重
+  5. 对合并 Top 10 精读全文
+  6. 填入记录表的精读部分
+
+预计耗时: 30-45 分钟
+停止准则: 最后 20 篇命中无新的高相关度文献
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**关键规则**：
+- `<关键词块 N>` 必须是 Phase A 生成的关键词块原样复制（带 OR 和括号）
+- `<主 IPC>` 和 `<次 IPC>` 必须从 Phase A 的 IPC 预估里选
+- `<今天>` 必须写成具体日期（从 Bash `date +%Y-%m-%d` 获取）
+- 每条检索式必须能被用户**直接复制粘贴**到 incoPat 的检索框
+
+### incoPat 语义检索卡片
+
+这是独立的一节，因为它填补了 T2 Derwent DWPI 的缺失（概念级召回）。
+
+```markdown
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【T1 必查】incoPat 语义检索
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://www.incopat.com/
+入口:    高级检索页面 → 切换到 "语义检索" 标签
+
+操作:
+  1. 粘贴以下方案描述到语义检索框:
+
+  <2-3 句自然语言方案描述, 从 Phase A 提取>
+
+  2. 语义检索会返回按相关度排序的候选
+  3. 读 Top 30 摘要, 筛出 Top 10 精读
+  4. 与命令行检索结果合并去重
+  5. 填入记录表
+
+Why 要做语义检索:
+  关键词检索会漏掉"换皮"专利——同样的技术用不同术语表达.
+  语义检索通过向量相似度召回, 弥补 Derwent DWPI 的缺失作用.
+
+预计耗时: 10-15 分钟
+停止准则: Top 30 内无新高相关度命中
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### 抵触申请检索卡片
+
+这是 incoPat 的独特价值。没有这个步骤，用户无法发现"别人已申请但还没公开"的专利。
+
+```markdown
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【特殊】抵触申请检索 (仅 incoPat 可做)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Why:
+  抵触申请 = 别人先申请 + 在你申请后才公开的文件.
+  破坏新颖性但不破坏创造性 (专利法 22.2).
+  免费库 (Google Patents / CNIPA pss) 无此类数据,
+  只有 incoPat 支持近期申请 / 未公开申请的查询.
+
+操作:
+  1. incoPat 高级检索
+  2. 申请日字段设为: [<今天 - 18 个月>, <今天>]
+  3. 公开状态筛选为 "早期申请" 或 "未公开"
+  4. 关键词使用核心特征块 (简化版, 只保留最核心的 2 组)
+  5. 读 Top 20 候选
+  6. 填入记录表的 "抵触申请候选" 部分
+
+预计耗时: 5-10 分钟
+停止准则: Top 20 读完即可
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### 非专利库卡片（Scholar + arXiv + CNKI）
+
+这三个必须都查，算法 / 软件 / 电学类专利的论文漏检是常见失败模式。
+
+```markdown
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【非专利必查】Google Scholar
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://scholar.google.com/
+
+检索式:
+  "<英文关键词组合 1>"
+  "<英文关键词组合 2>"
+
+时间过滤: 自定义范围到 <今天>
+
+操作:
+  1. 运行每条检索式
+  2. 读 Top 30 标题
+  3. 对相关度高的 Top 10 读摘要
+  4. 填入记录表 (论文类型条目)
+
+预计耗时: 10-15 分钟
+停止准则: Top 30 内无新高相关度论文
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【非专利必查】arXiv
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://arxiv.org/
+
+操作:
+  1. Advanced Search
+  2. Category: <cs.CV / cs.LG / cs.RO / ...>
+  3. Keywords: <英文关键词>
+  4. 读 Top 20 摘要
+  5. 填入记录表
+
+预计耗时: 5-10 分钟
+停止准则: Top 20 读完
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【非专利必查】CNKI 中国知网
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://www.cnki.net/ (校园 IP 登录)
+
+操作:
+  1. 主题检索: "<中文关键词 1>" AND "<中文关键词 2>"
+  2. 文献类型筛选: 学位论文 + 会议论文
+  3. 时间: 至 <今天>
+  4. 读 Top 20 摘要
+  5. 填入记录表
+
+Why 要查 CNKI:
+  国内学位论文和会议论文一样构成"现有技术",
+  但许多检索系统 (甚至 Google Scholar) 覆盖中文学位论文不全.
+  CNKI 是中文学位 / 会议论文的主库.
+
+预计耗时: 10-15 分钟
+停止准则: Top 20 读完
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### 可选交叉验证卡片（Google Patents Prior Art Finder + PATENTSCOPE CLIR）
+
+这两个是**时间允许时**做的，不强制。
+
+```markdown
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【可选交叉】Google Patents Prior Art Finder
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://patents.google.com/
+
+操作:
+  1. 把方案描述 (2-3 句自然语言) 粘贴到搜索框
+  2. 点击 "Prior Art Finder" 链接
+  3. 看 Google 语义排序的 Top 10
+  4. 如发现 Phase A/B 未覆盖的新命中, 补充到记录表
+
+预计耗时: 5 分钟
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【可选交叉】PATENTSCOPE CLIR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://patentscope.wipo.int/search/en/clir/clir.jsf
+
+操作:
+  1. 选 CLIR 跨语言检索
+  2. 输入中英关键词
+  3. 选择目标语言 (日文 / 德文 / 韩文 / 法文)
+  4. 读 Top 10 摘要
+  5. 如发现日德韩法专利命中, 补充到记录表
+
+Why:
+  日本和德国在机械 / 控制类专利上数量大,
+  如果你的方案和日德专利撞车, 只有 CLIR 能查到.
+
+预计耗时: 5-10 分钟
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+---
+
 ## 其他库模板库（用户未来加入库访问时使用）
 
 **PatSnap 卡片模板**：
@@ -596,6 +733,10 @@ URL:     https://www.questel.com/ (或 orbit.com 企业入口)
 8. **Guide 自己执行 B.1 精读** —— 错。你只生成卡片，不执行。执行由 orchestrator 派发子 agent 完成
 9. **B.1 卡片不写命中特有字段** —— 错。每张卡片必须显式写命中号、来源 URL、标题、精读重点，不能输出"对所有命中做精读"的通用卡片
 10. **B.1 卡片内容不下沉到 references** —— 错。模板主体在 `references/phase-b1-ai-read-cards.md`，guide 里只写命中特有字段和引用
+11. **Playwright 模式下输出用户操作卡片** —— 错。Playwright 模式输出执行指令，不是让用户复制粘贴的卡片
+12. **用户手动模式下输出执行指令** —— 错。用户手动模式输出操作卡片，与 v1.1 完全相同
+13. **AD 日期用 AD<= 语法** —— 错。正确语法是 AD="YYYYMMDD,YYYYMMDD"
+14. **CNKI SU= 用长词组** —— 错。应拆成短词 OR（如 SU='路面病害' → (SU='路面' OR SU='隧道') AND (SU='病害' OR SU='裂缝')）
 
 ## 开始前的推理
 
@@ -607,6 +748,7 @@ URL:     https://www.questel.com/ (或 orbit.com 企业入口)
 6. B.1 每张卡片的"精读重点"是否从本方案区别特征列表抄来（而不是 Phase A 的摘要）？
 7. B.2 时间预算是否落在 60-120 分之间？
 8. 回填模板的字段是否对齐 Phase C Judge 的期待（B.1 核实字段 + B.2 用户字段都要有）？
+9. user_profile.yml 的 playwright.mcp_available 是 true 还是 false？（决定输出格式）
 
 ## 参考规范
 

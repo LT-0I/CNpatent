@@ -73,6 +73,19 @@ non_patent:
     url: https://www.cnki.net/
     note: "中文学位论文 + 会议论文主库, 校园 IP 可访问"
 
+# ─── Playwright 自动化配置 (v1.2) ───
+# Phase B.2 使用 Playwright MCP 驱动浏览器自动完成付费库检索
+# 若 mcp_available 为 false 或字段不存在, 降级为 v1.1 用户手动模式
+playwright:
+  mcp_available: true          # 是否启用 Playwright 自动化
+  tabs:                         # 标签页配置 (0-based index, 用户按此顺序打开)
+    incopat_command: 0          # incoPat 命令检索 (/advancedSearch/init)
+    incopat_semantic: 1         # incoPat 语义检索 (/semanticSearch/init)
+    incopat_conflict: 2         # incoPat 抵触申请 (/advancedSearch/init)
+    cnki: 3                     # CNKI 高级检索
+  extract_top_n: 20             # 每次查询提取 Top N 条结果
+  result_dir: .omc/research     # 原始 JSON 结果存放目录
+
 # ─── Phase B 行为配置 ───
 phase_b:
   time_budget_minutes: 90      # 总时间预算上限
@@ -83,8 +96,8 @@ phase_b:
 
 # ─── 元数据 ───
 meta:
-  last_updated: 2026-04-14
-  version: 1.0
+  last_updated: 2026-04-17
+  version: 1.2
   owner: default
   notes: |
     修改本文件后, Phase B 的 Guide agent 会在下次运行时自动应用新配置.
