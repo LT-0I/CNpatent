@@ -213,3 +213,5 @@ word_budget: 3500
 - 对应三角详细规则：[../references/writing-rules.md](../references/writing-rules.md) 的 "⚠️ 写作主旨与篇幅" 章节
 - 动机句模式：同上的 "发明内容中的'动机句'模式" 章节
 - 回指规则（全文禁止所述）：同上的 "Formatting Rules" 第 4 条
+- **发明内容规则 M1（2026-04-17 新增）**：发明目的首段后必须显式标注"主创新点 vs 配套改进"——见 writing-rules.md 的 "Section-Specific Guidelines / 发明内容" 章节
+- **发明内容规则 M2（2026-04-17 新增）**：技术方案编号步骤只收录核心创新步骤，硬件调度/平台部署类内容必须降级为"作为一种优选的工程实施方式..."的单段 trailer——见 writing-rules.md 同章节

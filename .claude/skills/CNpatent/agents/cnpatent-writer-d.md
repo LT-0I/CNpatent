@@ -73,3 +73,5 @@ word_budget: 3500
 
 - 步骤展开规则（与 Writer-C 共用）：[cnpatent-writer-c.md](cnpatent-writer-c.md)
 - 具体实施方式结构模板：[../references/writing-rules.md](../references/writing-rules.md) 的 "具体实施方式的完整结构模板" 章节
+- **实施规则 D1（2026-04-17 新增）**：与 Writer-C 一致——步骤正文只描述操作，禁止嵌入效果论证/量化推断
+- **规则 S7 扩展（2026-04-17）**：与 Writer-C 一致——只给取值范围或"典型取值"，不写"本实施例取值 X"锚点

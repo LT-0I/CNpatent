@@ -247,7 +247,7 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 大纲确认后，自动进入多 Agent 并行生成流程。4 个 Writer 的**角色简报和写作规则**定义在 [`agents/cnpatent-writer-{a,b,c,d}.md`](agents/) 角色文件里；orchestrator 本阶段的任务是 **读取角色文件 → 拼接本次任务上下文 → 用 Agent 工具并行派发**。
 
-**模型强制**：每次调用 Agent 工具时**必须显式传 `model="opus"`**（从角色文件 frontmatter 的 `model` 字段读取）。这是 `.claude/skills/CNpatent/agents/` 下未注册 agent 文件的**唯一运行时强制点**——frontmatter 本身不会被 Claude Code 的 subagent 发现机制读取。关于"能硬强制 vs 只能软影响"的完整约定，见 [`agents/README.md`](agents/README.md)。
+**模型强制**：每次调用 Agent 工具时**必须显式传 `model="opus"`**（从角色文件 frontmatter 的 `model` 字段读取）。这是 `.claude/skills/CNpatent/agents/` 下未注册 agent 文件的**唯一运行时强制点**——frontmatter 本身不会被 Claude Code 的 subagent 发现机制读取。关于"能硬强制 vs 只能软影响"的完整约定，见 [`references/agent-role-files.md`](references/agent-role-files.md)。
 
 **步骤 1 — 任务拆分**：根据确认的大纲，将全文拆分为以下 4 个独立任务：
 
@@ -312,7 +312,7 @@ DO NOT INVENT ADDITIONAL LABELS OR ANNOTATIONS.
 
 **派发协议**（与 Phase 1 相同）：orchestrator `Read` `agents/cnpatent-reviewer.md` → 拼接任务上下文（全部 8 个 section 文件路径 + `01_outline.md` + 参考素材 + 术语锁定表 + 当前轮次 1/2）→ 调用 Agent 工具，**`model="opus"` 显式传**。
 
-**设计约束**（research-backed，详见 `agents/README.md` 的"设计原则"章节）：
+**设计约束**（research-backed，详见 `references/agent-role-files.md` 的"设计原则"章节）：
 
 - **Rubric-based 非 open critique**：Reviewer 逐项 pass/fail 检查 closed rubric，不做"这段写得怎么样"式开放式评论。研究表明 open critique 会触发 sycophancy（Reviewer 附和 Writer）
 - **不输出替代草稿**：涉及语义 / 结构的问题必须退回对应 Writer。只有禁用词残留 / 标点 / 编号格式等**机械性问题**才由 Reviewer 直接 `Edit` 就地修补。研究表明允许 Reviewer 改写会触发 "over-correction stripping voice" 失败模式

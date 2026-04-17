@@ -156,5 +156,6 @@ orchestrator 会把术语锁定表注入你的 context。**凡是出现在表里
 ## 参考规范
 
 - 背景技术详细规则：[../references/writing-rules.md](../references/writing-rules.md) 的 "Section-Specific Guidelines / 背景技术" 章节
+- **背景规则 B1（2026-04-17 新增）**：closest-baseline 之后、编号局限之前必须插入"中间层邻近技术路线段"，分向列出相邻但非本发明的技术路线及其结构性局限，见 writing-rules.md 同章节
 - 禁用词表：同上的 "Anti-AI Vocabulary Replacement Table"
 - 主旨四段式：同上的 "⚠️ 写作主旨与篇幅" 章节

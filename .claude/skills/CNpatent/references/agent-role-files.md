@@ -1,10 +1,10 @@
-# CNpatent — Agent Role Files
+# CNpatent — Agent 角色文件架构约定
 
-这个目录下的文件是 **CNpatent skill 内部使用的角色提示词模板**，不是 Claude Code 原生的子 agent 文件。
+本文件说明 `agents/` 子目录下 `cnpatent-*.md` 角色文件的使用约定。由 SKILL.md 在 Phase 0–2 各阶段引用。
 
-## 关键区别
+## 这些文件不是 Claude Code 原生子 agent
 
-Claude Code 的子 agent 发现机制只扫 `.claude/agents/`（项目级）和 `~/.claude/agents/`（用户级）。本目录下的文件 **不会** 被 `subagent_type: cnpatent-writer-a` 这种调用发现和加载。
+Claude Code 的子 agent 发现机制只扫 `.claude/agents/`（项目级）和 `~/.claude/agents/`（用户级）。本 skill `agents/` 目录下的文件 **不会** 被 `subagent_type: cnpatent-writer-a` 这种调用发现和加载。
 
 这些文件的定位是 **结构化角色简报 + 任务模板**：orchestrator（执行 CNpatent skill 的主 Claude）在 Phase 0–2 的各阶段显式 `Read` 这些文件，把 body 拼接到 Agent 工具调用的 `prompt` 参数中，再附上本次任务的具体上下文（大纲片段、参考素材、目标章节、字数上限等）。
 
@@ -66,11 +66,11 @@ for writer_id in ['writer-a', 'writer-b', 'writer-c', 'writer-d']:
 
 | 约束 | 强制方式 | 效果 |
 |---|---|---|
-| 模型 opus 层级 | orchestrator 调用 Agent 工具时显式传 `model="opus"` | ✅ 硬 |
-| 具体模型版本（opus-4-6 vs opus-4-5） | 依赖运行时默认 | ❌ 无法 |
-| 扩展思考强度 | body 里写 "Reason before drafting" 等自然语言触发 | ⚠️ 软 |
-| 工具限制 | 仅文档，Agent 工具不支持 | ❌ 无法 |
-| 字数上限 | body 里要求 + Reviewer 抽查 | ⚠️ 软 |
+| 模型 opus 层级 | orchestrator 调用 Agent 工具时显式传 `model="opus"` | 硬 |
+| 具体模型版本（opus-4-6 vs opus-4-5） | 依赖运行时默认 | 无法 |
+| 扩展思考强度 | body 里写 "Reason before drafting" 等自然语言触发 | 软 |
+| 工具限制 | 仅文档，Agent 工具不支持 | 无法 |
+| 字数上限 | body 里要求 + Reviewer 抽查 | 软 |
 
 > **关于扩展思考**：2026 年 1 月 Claude Code 一度废除了 `ultrathink` 魔法词，3 月 v2.1.68 回归但默认降为 medium effort。`ultrathink` / `think harder` 这类魔法词的行为在不同版本间不稳定，本 skill 的 agent 文件一律**不**依赖魔法词，而是用自然语言引导（"先推理这 6 个问题再动笔"），让模型默认打开的思考自然展开。
 
@@ -98,9 +98,9 @@ frontmatter 字段已按 Claude Code 的约定命名，迁移成本接近零。
 
 | 文件 | 触发阶段 | 职责 |
 |---|---|---|
-| [`cnpatent-planner.md`](cnpatent-planner.md) | Phase 0 | 大纲生成，建立主旨四段式 / 三方对应 / 术语锁定 |
-| [`cnpatent-writer-a.md`](cnpatent-writer-a.md) | Phase 1 | 写 一、发明名称 + 二、技术领域 + 三、背景技术 |
-| [`cnpatent-writer-b.md`](cnpatent-writer-b.md) | Phase 1 | 写 四·发明目的 + 四·技术解决方案 + 四·技术效果 |
-| [`cnpatent-writer-c.md`](cnpatent-writer-c.md) | Phase 1 | 写 五、附图说明 + 六、具体实施方式前半 |
-| [`cnpatent-writer-d.md`](cnpatent-writer-d.md) | Phase 1 | 写 六、具体实施方式后半 + 固定结尾段 |
-| [`cnpatent-reviewer.md`](cnpatent-reviewer.md) | Phase 2 | 三重审查：一致性 / 反幻觉 / 去 AI 味 |
+| [`cnpatent-planner.md`](../agents/cnpatent-planner.md) | Phase 0 | 大纲生成，建立主旨四段式 / 三方对应 / 术语锁定 |
+| [`cnpatent-writer-a.md`](../agents/cnpatent-writer-a.md) | Phase 1 | 写 一、发明名称 + 二、技术领域 + 三、背景技术 |
+| [`cnpatent-writer-b.md`](../agents/cnpatent-writer-b.md) | Phase 1 | 写 四·发明目的 + 四·技术解决方案 + 四·技术效果 |
+| [`cnpatent-writer-c.md`](../agents/cnpatent-writer-c.md) | Phase 1 | 写 五、附图说明 + 六、具体实施方式前半 |
+| [`cnpatent-writer-d.md`](../agents/cnpatent-writer-d.md) | Phase 1 | 写 六、具体实施方式后半 + 固定结尾段 |
+| [`cnpatent-reviewer.md`](../agents/cnpatent-reviewer.md) | Phase 2 | 三重审查：一致性 / 反幻觉 / 去 AI 味 |
