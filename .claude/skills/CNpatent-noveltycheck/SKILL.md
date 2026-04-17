@@ -218,13 +218,21 @@ outputs/[方案名]/
    - 可用 → Playwright 模式
    - 不可用 → 降级为 v1.1 用户手动模式（生成操作卡片，暂停等用户手动检索）
 2. 启动 Playwright 浏览器
-3. 提示用户登录（见下方"人类工作时段"）
-4. 用户确认后，读 Guide 输出的 B.2 执行计划（`3_manual_search_guide.md` 第二大节）
-5. 在一条消息里同时派发 6 个后台 subagent：
+3. **IP 登录 + 验证**（v1.2.1 新增，失败才退回用户手工登录）：
+   - 读 `user_profile.yml` 的 `playwright.auto_login.enabled`，若为 false 跳到步骤 4
+   - 若 `auto_login.proxy_server` 非空，orchestrator 打印 "依赖代理 ${proxy_server}，请确认启动 MCP 时已加 `--proxy-server` 参数"
+   - **IP 登录机制**：incoPat/CNKI 对校园 IP 段自动发回登录态 cookie，不需要表单/密码/点按。orchestrator 只要让 Playwright 以校园 IP（或通过代理出口到校园 IP）访问目标页，站点就会自动登录
+   - orchestrator 按 `playwright.tabs` 顺序 `browser_tabs new` + `browser_navigate` 打开 4 个标签页
+   - 每个标签页 `browser_evaluate` 跑 `scripts/playwright/incopat_check_login.js` 或 `cnki_check_login.js` 验证 IP 登录是否生效
+   - 若 `verify_tabs: all` 且 **4/4** 都返回 `logged_in: true` → 跳过人类工作时段，直接进入步骤 5
+   - 若任一 tab 返回 `logged_in: false` → 按 `on_failure` 处理：`manual_prompt` 退回步骤 4；`abort` 终止
+4. 提示用户登录（见下方"人类工作时段"），用户确认后继续
+5. 读 Guide 输出的 B.2 执行计划（`3_manual_search_guide.md` 第二大节）
+6. 在一条消息里同时派发 6 个后台 subagent：
    - 每个 Playwright subagent 收到：该通道的执行指令 + 脚本路径 + 输出路径 + 区别特征列表
    - 每个 WebSearch subagent 收到：查询表达式 + 输出路径
    - 每个 subagent 独立完成检索并写入 `.omc/research/<channel>/queryN.json`
-6. 所有 subagent 完成后，orchestrator 读 JSON 结果 → 合并 → 相关性评分 → 去重 → 写入 `4_manual_search_template.md` B.2 字段
+7. 所有 subagent 完成后，orchestrator 按 [references/phase-b2-merge-rules.md](references/phase-b2-merge-rules.md) 执行：通道内去重 → 跨通道同 PN 合并 → 同族合并（AN 前 10 位 / 启发式）→ Phase A 去重标记 → 相关性评分 → 写入 `4_manual_search_template.md` B.2 字段
 
 **约束**（不变）：
 - 检索式必须基于 Phase A 的关键词块 + IPC 构造，不得凭空编造
@@ -236,25 +244,39 @@ outputs/[方案名]/
 
 **Playwright 模式（v1.2 默认）**：
 
-Phase B.1 执行完毕后，skill 输出：
+Phase B.1 执行完毕后，orchestrator 尝试 AI 自主登录：自动打开 4 个标签页 + 跑 `*_check_login.js` 脚本。
+
+**路径 A —— IP 登录成功**（Playwright 出口 IP 在校园段 / 通过校园代理）：
 
 ```
-✅ Phase B.1 完成（AI 精读）。
-
-Phase B.2 需要你在浏览器中登录（~5 分钟）：
-1. Playwright 已打开 Chromium 浏览器窗口
-2. 请打开 4 个标签页：
-   - Tab 0: incoPat 高级检索 (https://www.incopat.com/advancedSearch/init)
-   - Tab 1: incoPat 语义检索 (https://www.incopat.com/semanticSearch/init)
-   - Tab 2: incoPat 高级检索 (https://www.incopat.com/advancedSearch/init)（抵触申请用）
-   - Tab 3: CNKI 高级检索 (https://kns.cnki.net/kns8s/AdvSearch)
-3. 在 incoPat 和 CNKI 完成登录（校园 IP 应自动登录）
-4. 完成后告诉我 "标签页已开好"
-
-AI 将自动完成所有检索（约 30 分钟），你可以离开。
+✅ Phase B.1 完成。Phase B.2 IP 登录验证通过（4/4 标签页已登录）。
+   - Tab 0 incoPat 命令检索: ✓ (#textarea 就绪)
+   - Tab 1 incoPat 语义检索: ✓ (#querytext 就绪)
+   - Tab 2 incoPat 抵触申请: ✓ (#textarea 就绪)
+   - Tab 3 CNKI 高级检索: ✓ (检索表单就绪, 无 CAPTCHA)
+开始 B.2 后台检索（约 30 分钟）。
 ```
 
-用户确认后，orchestrator 立即开始 B.2 自动化，无需再等。
+orchestrator 立即派发 6 个后台 subagent，无需用户介入。
+
+**路径 B —— IP 登录未生效，退回手工**：
+
+```
+⚠ Phase B.2 IP 登录验证失败（Tab 3 CNKI 未登录 — redirect to homepage）。
+
+可能原因：
+1. Playwright MCP 启动时未配置 --proxy-server，Claude Code 当前出口 IP 不在校园段
+2. 校园代理未正确转发 HTTPS
+3. CNKI 弹出滑块验证码阻止 IP 认证
+
+建议：若希望下次也走自主 IP 登录，重启 MCP 并加代理：
+  claude mcp add playwright -- npx -y @playwright/mcp@latest \
+    --proxy-server=http://proxy.university.edu:8080
+
+本次先退回手工模式。请在 Playwright 浏览器窗口中完成登录（~5 分钟），完成后告诉我 "标签页已开好"。
+```
+
+用户确认后，orchestrator 立即开始 B.2 自动化。
 
 **用户手动模式（v1.1 降级）**：
 

@@ -86,6 +86,29 @@ playwright:
   extract_top_n: 20             # 每次查询提取 Top N 条结果
   result_dir: .omc/research     # 原始 JSON 结果存放目录
 
+  # ── AI 自主登录配置 (v1.2.1) ──
+  # Phase B.2 默认走 IP 登录: incoPat 和 CNKI 在校园 IP 段下自动认证, 不需要表单/密码.
+  # orchestrator 通过 Playwright 打开页面后, 站点基于请求 IP 自动发回登录态 cookie.
+  # *_check_login.js 脚本用于"验证 IP 登录是否生效", 失败才退回用户手工登录.
+  auto_login:
+    enabled: true               # 启用 IP 自主登录. false = 跳过, 直接用户手工登录
+    strategy: ip_login          # ip_login = 依赖 IP 段自动认证 (唯一实装策略)
+
+    # 若 Claude Code 运行环境不在校园 IP 段, 需用代理让 Playwright 出口 IP 落到校园段.
+    # 设置方式: 在启动 Playwright MCP 时加 --proxy-server 参数:
+    #   claude mcp add playwright -- npx -y @playwright/mcp@latest \
+    #     --proxy-server=http://proxy.university.edu:8080
+    # 本字段仅供 orchestrator 检测/提示, 不会自动重启 MCP.
+    proxy_server: null          # 例: "http://proxy.university.edu:8080" / "socks5://127.0.0.1:1080"
+
+    # 验证策略
+    max_retries: 1              # 单 tab 检测失败后重试次数 (0 = 不重试直接降级)
+    verify_tabs: all            # all = 4/4 全部登录才算成功 / any = 任一登录就继续 (不推荐)
+
+    # 失败时的降级路径
+    on_failure: manual_prompt   # manual_prompt = 退回用户手工登录 (默认)
+                                # abort = 直接终止 Phase B.2, 报告原因
+
 # ─── Phase B 行为配置 ───
 phase_b:
   time_budget_minutes: 90      # 总时间预算上限
@@ -97,7 +120,7 @@ phase_b:
 # ─── 元数据 ───
 meta:
   last_updated: 2026-04-17
-  version: 1.2
+  version: 1.2.1
   owner: default
   notes: |
     修改本文件后, Phase B 的 Guide agent 会在下次运行时自动应用新配置.

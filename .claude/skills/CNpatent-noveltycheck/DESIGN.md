@@ -1018,4 +1018,126 @@ DOM 操作固化为 7 个独立 JS 脚本（`scripts/playwright/`）。subagent 
 
 ---
 
-以上为 DESIGN.md v1.0 + v1.1 补丁 + v1.2 补丁。v1.0 章节（§1-16）为历史快照；v1.1（§17）和 v1.2（§18）是当前实装版本的权威说明。
+以上为 DESIGN.md v1.0 + v1.1 补丁 + v1.2 补丁。v1.0 章节（§1-16）为历史快照；v1.1（§17）、v1.2（§18）和 v1.2.1（§19）是当前实装版本的权威说明。
+
+---
+
+## 19. v1.2.1 Phase B.2 自主登录 + 同族合并落地（2026-04-17）
+
+本节是 v1.2 的增量补丁。v1.2 首次上线时有两个遗留问题：(a) 登录完全由用户手动完成，AI 没做任何尝试；(b) 文档反复声明"同族合并必做"，但代码里没实现，orchestrator 的"→ 合并 → 去重"只是一行口头约束。v1.2.1 把这两件事落地。
+
+### 19.1 AI 自主登录：IP 登录机制
+
+**设计原则**：incoPat 和 CNKI 两大付费库都支持基于 IP 段的自动认证——机构/校园 IP 访问时站点后端直接派发登录态 cookie，无需表单、无需密码、无需点按。Phase B.2 的"AI 自主登录"就是让 Playwright 直接利用这个机制。**不做基于账号密码的表单登录**（凭据管理、验证码、风控规则都是坑，得不偿失）。
+
+**三种 IP 场景**：
+
+| 场景 | Playwright 出口 IP | 配置 |
+|---|---|---|
+| Claude Code 跑在校园网内 | 天然是校园 IP | `proxy_server: null`，什么都不用配 |
+| Claude Code 在校外 + 有校园 VPN/代理 | 校园 VPN 出口 | `proxy_server: http://proxy.univ.edu:8080`；启动 MCP 时加 `--proxy-server` 参数 |
+| Claude Code 在校外 + 无代理 | 任意公网 IP | IP 登录必然失败，退回用户手工登录（可让用户通过浏览器开发者工具复制 cookie 继续，但当前版本不支持） |
+
+**启动 MCP 带代理的命令**：
+
+```bash
+claude mcp add playwright -- npx -y @playwright/mcp@latest \
+  --proxy-server=http://proxy.university.edu:8080
+```
+
+Playwright MCP 的代理是 **browser-launch-level** 配置，由 MCP server 启动参数决定，运行时无法切换。skill 只负责在 `user_profile.yml` 里记录这个参数（供用户参考 + orchestrator 提示），不会自动重启 MCP。
+
+**验证层 —— check_login 脚本**：
+
+IP 登录是否真正生效，通过"目标页的工作元素能否加载"验证：
+
+| 脚本 | 判定逻辑 |
+|---|---|
+| `incopat_check_login.js` | navigate 到 `/advancedSearch/init` 后 `#textarea` 存在 + URL 未重定向到首页 → IP 登录成功 |
+| `cnki_check_login.js` | navigate 到 CNKI 高级检索后检索 textarea 就绪 + CAPTCHA 未出现 → IP 登录成功 |
+
+**为什么用工作元素做判据而不是找 `.user-info` 选择器**：
+1. incoPat/CNKI 改 class 命名的频率远高于改"登录后能看到什么页面"
+2. "能不能用"是终极业务信号，比"是否显示用户头像"更稳
+3. 未登录时 incoPat 直接硬重定向到首页——`#textarea` 不存在是确定性信号
+
+**orchestrator 协议**（SKILL.md Phase B.2 步骤 3 插入）：
+
+```
+3. IP 登录 + 验证 (v1.2.1):
+   a. 读 user_profile.yml auto_login 段
+      - enabled=false → 跳到步骤 4 (用户手工登录)
+      - proxy_server 非空 → 打印 "依赖代理 ${proxy_server}, 请确认 MCP 启动时已加 --proxy-server"
+   b. orchestrator browser_tabs new × 4 + browser_navigate (4 个 URL)
+   c. 每 tab browser_evaluate *_check_login.js
+   d. verify_tabs=all → 4/4 logged_in=true 才算成功
+   e. 成功 → 跳过用户提示, 步骤 5
+   f. 失败 → on_failure=manual_prompt 时退回步骤 4, abort 时终止
+```
+
+**降级路径**：任一 tab IP 登录失败 → 退回 v1.2 的用户手动模式，用户体验不退化。成功时省掉 5 分钟等待。
+
+**不做的事**：
+- 不写表单登录脚本（`*_account_login.js`）——账号密码链路风险远大于收益
+- 不实现 cookie 导入（从用户浏览器拷 cookie）——v1.2.1 先保持简单
+- 不自动切换代理——这是 MCP server 启动级配置，skill 改不动
+
+### 19.2 同族合并落地
+
+**问题**：v1.2 的 `incopat_extract.js` 只把 "中国同族" 当 tag token 过滤掉，根本没抓申请号（AN），也没记录同族数量。orchestrator 的 "→ 合并 → 去重" 步骤没有具体算法，实际执行时只能按 pn 做粗去重，真正的同族合并从未发生。
+
+**v1.2.1 修复**：
+
+1. **extract 层**：`incopat_extract.js` 新增三字段
+   - `an`: 完整申请号（如 `CN202410012345.6`）
+   - `family_key`: 申请号去标点后前 10 位（如 `CN20241001`）——作为同族分组键
+   - `family_tag` / `family_count`: 解析 "中国同族 N" 或 "全球同族 N" 标签
+
+2. **orchestrator 层**：新文件 `references/phase-b2-merge-rules.md` 定义完整合并算法
+   - Step 1: 通道内同 pn 去重
+   - Step 2: 跨通道同 pn 合并（取最高评分）
+   - Step 3: 同族合并
+     - 强同族：`family_key` 相同 或 `an` 相同
+     - 弱同族（启发式）：`applicant` 一致 + `ad` ≤ 7 天 + `title` 相似度 ≥ 80%
+     - 保留 `pd` 最晚的条目作为代表
+   - Step 4: Phase A 去重（只打标，不移除）
+   - Step 5: 非专利按 url / title 去重
+
+3. **文档侧**：SKILL.md 的 orchestrator 协议步骤 7 直接引用 `phase-b2-merge-rules.md`，不再是一行"合并→去重"。
+
+**为什么同族用 family_key 前 10 位**：CN 专利申请号格式为 `CN YYYYNN NNNNNNN.X`（年份 + 顺序号 + 校验位）。前 10 字符 `CN + 年 + 6 位顺序号` 足以锁定一个申请。族内不同公开号（A → B → C 对应公开→授权→再授权）共享同一 AN，自然共享同一 family_key。这个启发式比让 LLM 自己判断"是否同族"稳定得多，也不需要调外部 family 数据库。
+
+**为什么不做 UI 侧合并同族**：incoPat 有 "合并同族" 按钮，但点了之后每行只显示一个代表，丢掉了对其他族成员的可见性——后续 Phase C Judge 如果想看某个族的最早优先权日就拿不到。保留原始结果 + orchestrator 侧计算代价很低（O(n)），拿到的信息最全。
+
+### 19.3 反模式（v1.2.1）
+
+| 反模式 | 后果 |
+|---|---|
+| check_login 用 `.user-info` 类选择器 | incoPat 改 class 命名就失效 |
+| 把同族判定塞给 subagent | 同族是跨通道问题，单通道 subagent 看不到全局，必须 orchestrator 做 |
+| 同族用 IPC 分组 | 同发明多 IPC，不同发明也可能共享 IPC，彻底错 |
+| 弱同族阈值过宽 | title 相似度 < 80% 或 ad 差 > 7 天就合并，会把不同发明错并成一族 |
+| 自主登录失败时阻塞 | 任一 tab 失败立刻退回手动模式，不重试不卡住 |
+| 跨通道评分取平均 | 取最高值——高分说明至少一个通道确认强相关，平均会稀释这个信号 |
+
+### 19.4 文件影响
+
+| 文件 | 变更 |
+|---|---|
+| `scripts/playwright/incopat_check_login.js` | **新建** |
+| `scripts/playwright/cnki_check_login.js` | **新建** |
+| `scripts/playwright/incopat_extract.js` | 增加 an / family_key / family_tag / family_count 字段 |
+| `references/phase-b2-merge-rules.md` | **新建** 合并算法 |
+| `user_profile.yml` | playwright 段新增 auto_login 子段 |
+| `SKILL.md` | Phase B.2 orchestrator 协议插入步骤 3（自主登录） + 人类工作时段改为双路径 |
+
+### 19.5 向后兼容
+
+- `4_manual_search_template.md` schema 不变（B.2 字段多了 `family_members` / `hit_channels`，但 Phase C Judge 不读这些字段也不报错）
+- `5_verified_outline.md` 不变
+- v1.2 的 7 个脚本全部保留，仅 `incopat_extract.js` 向后兼容扩展字段
+- `auto_login.enabled: false` 时行为与 v1.2 完全一致
+
+---
+
+以上为 DESIGN.md v1.0 + v1.1 + v1.2 + v1.2.1 补丁。v1.0 章节（§1-16）为历史快照；v1.1（§17）、v1.2（§18）、v1.2.1（§19）是当前实装版本的权威说明。
