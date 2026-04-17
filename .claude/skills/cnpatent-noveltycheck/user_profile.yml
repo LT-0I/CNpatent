@@ -1,0 +1,123 @@
+# cnpatent-noveltycheck 用户配置文件
+# 位置: .claude/skills/cnpatent-noveltycheck/user_profile.yml
+# 用途: 记录用户对各付费 / 免费 / 非专利数据库的访问权限
+# Phase B 的 Guide agent 根据本文件动态生成操作卡片
+
+# ─── 付费专利库 ───
+paid_access:
+  incopat:
+    available: true
+    auth: campus_ip        # 无需注册，校园网 IP 自动登录
+    quota: unlimited       # IP 登录无次数限制
+    url: https://www.incopat.com/
+    note: "国内 CN 专利覆盖最全 + 中文母语 + 10 种检索方式 (含语义检索)"
+
+  patsnap:
+    available: false
+    auth: null             # 可选值: campus_ip / personal_account / institution_account
+    quota: null
+    url: https://www.patsnap.com/
+    note: ""
+
+  derwent:
+    available: false
+    auth: null
+    quota: null
+    url: https://derwentinnovation.clarivate.com.cn/
+    note: "DWPI 标准化摘要, 2024-Q4 起加入 AI 搜索"
+
+  orbit:
+    available: false
+    auth: null
+    quota: null
+    url: https://www.questel.com/patent/ip-intelligence-software/orbit-intelligence/
+    note: ""
+
+# ─── 免费专利库 (Phase A 自动查询) ───
+free_access:
+  cnipa_pss:
+    available: true
+    url: https://pss-system.cponline.cnipa.gov.cn/
+    note: "CN 官方权威库, 免费, 需注册账号做命令行检索"
+
+  google_patents:
+    available: true
+    url: https://patents.google.com/
+    note: "含 Prior Art Finder 粘贴式检索"
+
+  patentscope:
+    available: true
+    url: https://patentscope.wipo.int/search/en/clir/clir.jsf
+    note: "WIPO, 支持跨语言 CLIR 检索"
+
+  lens:
+    available: true
+    url: https://www.lens.org/
+    note: "全球专利 + 学术文献联动, 免费注册后可导出"
+
+# ─── 非专利文献库 ───
+non_patent:
+  google_scholar:
+    available: true
+    url: https://scholar.google.com/
+    note: "英文论文 + 跨领域, 算法 / 软件类必查"
+
+  arxiv:
+    available: true
+    url: https://arxiv.org/
+    note: "预印本, AI / ML / CS 必查"
+
+  cnki:
+    available: true
+    auth: campus_ip
+    url: https://www.cnki.net/
+    note: "中文学位论文 + 会议论文主库, 校园 IP 可访问"
+
+# ─── Playwright 自动化配置 (v1.2) ───
+# Phase B.2 使用 Playwright MCP 驱动浏览器自动完成付费库检索
+# 若 mcp_available 为 false 或字段不存在, 降级为 v1.1 用户手动模式
+playwright:
+  mcp_available: true          # 是否启用 Playwright 自动化
+  tabs:                         # 标签页配置 (0-based index, 用户按此顺序打开)
+    incopat_command: 0          # incoPat 命令检索 (/advancedSearch/init)
+    incopat_semantic: 1         # incoPat 语义检索 (/semanticSearch/init)
+    incopat_conflict: 2         # incoPat 抵触申请 (/advancedSearch/init)
+    cnki: 3                     # CNKI 高级检索
+  extract_top_n: 20             # 每次查询提取 Top N 条结果
+  result_dir: .omc/research     # 原始 JSON 结果存放目录
+
+  # ── AI 自主登录配置 (v1.2.1) ──
+  # Phase B.2 默认走 IP 登录: incoPat 和 CNKI 在校园 IP 段下自动认证, 不需要表单/密码.
+  # Playwright 打开页面后, 站点基于请求 IP 自动发回登录态 cookie.
+  # *_check_login.js 脚本用于"验证 IP 登录是否生效", 失败才退回用户手工登录.
+  #
+  # 生效条件: Claude Code 本身必须运行在校园网 / 机构认可的 IP 段内.
+  # 若不在, 自动登录必然失败, 退回用户手工登录模式.
+  auto_login:
+    enabled: true               # 启用 IP 自主登录. false = 跳过, 直接用户手工登录
+    strategy: ip_login          # ip_login = 依赖 IP 段自动认证 (唯一实装策略)
+
+    # 验证策略
+    max_retries: 1              # 单 tab 检测失败后重试次数 (0 = 不重试直接降级)
+    verify_tabs: all            # all = 4/4 全部登录才算成功 / any = 任一登录就继续 (不推荐)
+
+    # 失败时的降级路径
+    on_failure: manual_prompt   # manual_prompt = 退回用户手工登录 (默认)
+                                # abort = 直接终止 Phase B.2, 报告原因
+
+# ─── Phase B 行为配置 ───
+phase_b:
+  time_budget_minutes: 90      # 总时间预算上限
+  min_hits_to_review: 30       # 最少阅读摘要数
+  min_full_text_reads: 5       # 最少精读数
+  require_non_patent: true     # 是否强制查非专利文献 (true = 强制)
+  require_conflicting_app: true # 是否强制查抵触申请 (需 incoPat)
+
+# ─── 元数据 ───
+meta:
+  last_updated: 2026-04-17
+  version: 1.2.1
+  owner: default
+  notes: |
+    修改本文件后, Phase B 的 Guide agent 会在下次运行时自动应用新配置.
+    获得新库访问时, 把对应条目的 available 改为 true 并填写 auth 和 url.
