@@ -398,7 +398,24 @@
 3. 写 `.claude/refactor/state/sessions/<date>_<pr-topic>.md` 交接笔记
 4. 若发现了新的设计问题或决策，更新 `FINDINGS.md` 或 `DECISIONS.md`
 5. 若老机制核验结果已出，更新 `MVM.md`
-6. commit + push（推 remote 为了协作可见）
+6. commit + push（推 remote 为了协作可见；也可用 `/ship` 自动化）
+
+---
+
+## PR 执行期的 gstack 工具（可选脚手架）
+
+重构产物本身不依赖 gstack 运行时。但执行 PR 时可以借 gstack skill 加速：
+
+| 时机 | 命令 | 用途 |
+|------|------|------|
+| 开工前 | `/plan-eng-review` | 复核本 PR 设计是否与 FINDINGS / DECISIONS 对齐 |
+| 代码写完 | `/review` | 过一遍 diff，catch 漏掉的 gate、缺失的 schema 校验、未核验的老机制引用 |
+| 新 skill 接入前 | `/qa` | 对新 skill 跑基本路径冒烟测试 |
+| 推 PR | `/ship` | 自动跑 review + push + 创 PR |
+| 新 skill 报错 | `/investigate` | 根因分析 |
+| PR 收尾 | `/retro` | 归纳本 PR 的决策和新发现（可选） |
+
+都是**可选**。不用也能按 PR_PLAN.md 走完流程。跨 session 恢复走本项目自己的 `state/current.md`，不用 gstack `/checkpoint`。
 
 ---
 
