@@ -76,6 +76,23 @@
 
 ---
 
+## 开发期可用的 gstack 命令（可选脚手架）
+
+重构产物**不依赖** gstack 运行时。但 PR 执行过程中，gstack skill 可以当脚手架：
+
+| 场景 | 命令 |
+|------|------|
+| PR 开工前复核设计 | `/plan-eng-review` |
+| PR 代码写完自检 | `/review` |
+| 新 skill 冒烟测试 | `/qa` |
+| 推 PR | `/ship` |
+| 新 skill 报错排查 | `/investigate` |
+| PR 结束后复盘（可选） | `/retro` |
+
+本项目自身的 `state/current.md` 已足够支撑跨 session 恢复，无需 gstack `/checkpoint`。
+
+---
+
 ## 重构项目自身的三种使用形态
 
 这套文档也用了我们为 cnpatent 设计的同一套续跑机制：
