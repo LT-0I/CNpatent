@@ -1,0 +1,14 @@
+{"pr":1,"title":"kit骨架 + MVM + schemas + run基础设施","status":"not_started","deps":[],"estimate_days":1,"can_parallel_with":[]}
+{"pr":2,"title":"/cnpatent-template-setup 对话式核验","status":"not_started","deps":[1],"estimate_days":3,"can_parallel_with":[3,4,5,6,"6b"]}
+{"pr":3,"title":"/cnpatent-template-study 可选产物","status":"not_started","deps":[1],"estimate_days":1,"can_parallel_with":[2,4,5,6,"6b"]}
+{"pr":4,"title":"/cnpatent-ref-extract 多格式 + 多轮自审","status":"not_started","deps":[1],"estimate_days":2,"can_parallel_with":[2,3,5,6,"6b"]}
+{"pr":5,"title":"/cnpatent-learn + /cnpatent-consolidate + 文件锁","status":"not_started","deps":[1],"estimate_days":1.5,"can_parallel_with":[2,3,4,6,"6b"]}
+{"pr":6,"title":"/cnpatent-revise 三路合一 + 双把关学习 flag","status":"not_started","deps":[5],"estimate_days":2,"can_parallel_with":[2,3,4,"6b"]}
+{"pr":"6b","title":"/cnpatent-runs + /cnpatent-resume","status":"not_started","deps":[1],"estimate_days":0.5,"can_parallel_with":[2,3,4,5,6]}
+{"pr":7,"title":"/cnpatent-write 最小版 (canonical section schema)","status":"not_started","deps":[1,2,3],"estimate_days":1.5,"can_parallel_with":[]}
+{"pr":8,"title":"/cnpatent-review 机制核验 + 三 rubric + write 扩展到全章节","status":"not_started","deps":[7],"estimate_days":2,"can_parallel_with":[9,10]}
+{"pr":9,"title":"/cnpatent-humanize 机制核验 + 消融实验","status":"not_started","deps":[7],"estimate_days":2,"can_parallel_with":[8,10]}
+{"pr":10,"title":"查新五件套 (free/paid/shortlist/deepread/judge)","status":"not_started","deps":[1],"estimate_days":2,"can_parallel_with":[8,9]}
+{"pr":11,"title":"/cnpatent-build (canonical → template 映射) + 图片提示词","status":"not_started","deps":[2,7],"estimate_days":1,"can_parallel_with":[]}
+{"pr":12,"title":"/cnpatent-pipeline + challenge + ideate + plan-outline + 老 skill 归档","status":"not_started","deps":[1,2,3,4,5,6,"6b",7,8,9,10,11],"estimate_days":1,"can_parallel_with":[]}
+{"pr":13,"title":"(延后) /cnpatent-train 批量训练","status":"deferred","deps":[12,"≥20份真实专利数据"],"estimate_days":null,"can_parallel_with":[],"note":"等用户攒够训练资料再开"}
