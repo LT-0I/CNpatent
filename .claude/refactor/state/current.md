@@ -37,6 +37,7 @@
 - 2026-04-18：生成全套规划文档（README / ARCHITECTURE / SKILLS / PR_PLAN / FINDINGS / DECISIONS / MVM）
 - 2026-04-18：7 个决策全部确定（见 DECISIONS.md）
 - 2026-04-18：10 个 Finding 全部确定（见 FINDINGS.md）
+- 2026-04-18：对照讨论记录做计划复核。修正 4 处计数不一致（skill 19→22；PR 14 主→13 主+1 延后），见 session 笔记 `2026-04-18_plan-review.md`。未改变任何设计或范围。
 
 ---
 

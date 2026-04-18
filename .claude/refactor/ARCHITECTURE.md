@@ -89,7 +89,7 @@ C:\Users\13080\Desktop\CNpatent\                项目根
 │   │       ├── no-overreach/                   不误伤正常文本
 │   │       └── template-roundtrip/             canonical ↔ template 双向验证
 │   │
-│   ├── cnpatent-setup/                         17 个 phase skills
+│   ├── cnpatent-setup/                         22 个 phase skills（+ 1 延后）
 │   ├── cnpatent-template-setup/
 │   ├── cnpatent-template-study/
 │   ├── cnpatent-ideate/

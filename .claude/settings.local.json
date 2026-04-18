@@ -7,7 +7,12 @@
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/audit.py --input outputs/tunnel_pavement_3d_localization/sections/4a_purpose.md --section 四 --enable-v15 --output /tmp/audit_4a.json)",
       "Bash(python -c ' *)",
-      "Bash(PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/audit.py --help)"
+      "Bash(PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/audit.py --help)",
+      "Bash(mkdir -p .claude/refactor/state/sessions)",
+      "Bash(mv docs/refactor/README.md docs/refactor/ARCHITECTURE.md docs/refactor/SKILLS.md docs/refactor/PR_PLAN.md docs/refactor/FINDINGS.md docs/refactor/DECISIONS.md docs/refactor/MVM.md .claude/refactor/)",
+      "Bash(mv docs/refactor/state/progress.jsonl docs/refactor/state/current.md .claude/refactor/state/)",
+      "Bash(mv docs/refactor/state/sessions/2026-04-18_planning-complete.md .claude/refactor/state/sessions/)",
+      "Bash(rm -rf docs)"
     ]
   }
 }

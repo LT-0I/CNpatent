@@ -27,8 +27,8 @@
 |------|------|-------|
 | `README.md`（本文件） | 入口 + 恢复协议 | **每次进入先读** |
 | `ARCHITECTURE.md` | 架构图、目录结构、数据流、设计原则 | 开任何 PR 前 |
-| `SKILLS.md` | 19 个 skill 清单 + 职责 + 依赖 | 动 skill 文件前 |
-| `PR_PLAN.md` | 14 个 PR 顺序 + 交付物 + 依赖 + 估时 | 挑下一个 PR 时 |
+| `SKILLS.md` | 22 个主 skill + 1 延后，含职责与依赖 | 动 skill 文件前 |
+| `PR_PLAN.md` | 13 个主 PR + 1 延后，含交付物、依赖、估时 | 挑下一个 PR 时 |
 | `FINDINGS.md` | 10 个评审发现 + 修订方向 | 想了解设计动机 |
 | `DECISIONS.md` | 用户决策 1-7 + rationale + 补充 | 拿捏设计偏向时 |
 | `MVM.md` | 老机制核验清单 | PR #7 / #8 / #9 前 |
