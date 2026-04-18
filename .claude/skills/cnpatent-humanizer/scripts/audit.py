@@ -456,14 +456,25 @@ def detect_term_drift(text: str, term_lock: Optional[Dict[str, List[str]]] = Non
 # ─────────────────────────────────────────────────────────────────────────
 # Scoring
 # ─────────────────────────────────────────────────────────────────────────
-def compute_score(all_hits: List[Dict]) -> Dict:
+def compute_score(all_hits: List[Dict], enable_skeletal: bool = False,
+                  enable_sentential: bool = False,
+                  enable_rhetorical: bool = False) -> Dict:
     weights = {'critical': 8, 'high': 4, 'medium': 2, 'style': 1.5, 'patent': 6}
+    if enable_skeletal:
+        weights['skeletal'] = 10
+    if enable_sentential:
+        weights['sentential'] = 3
+    if enable_rhetorical:
+        weights['rhetorical'] = 6
     breakdown = {k: 0 for k in weights}
     for hit in all_hits:
         cat = hit.get('category', 'high')
         if cat == 'critical_or_high':
             cat = 'high'
         if cat in breakdown:
+            # non_scoring flags contribute 0 regardless of weight
+            if hit.get('non_scoring'):
+                continue
             count = hit.get('count', 1)
             w = hit.get('weight', weights[cat])
             breakdown[cat] += count * w
@@ -479,7 +490,9 @@ def compute_score(all_hits: List[Dict]) -> Dict:
     return {'score': round(total, 1), 'level': level, 'breakdown': breakdown}
 
 
-def decide_action(score_obj: Dict, all_hits: List[Dict]) -> Dict:
+def decide_action(score_obj: Dict, all_hits: List[Dict],
+                  enable_skeletal: bool = False,
+                  section: str = 'all') -> Dict:
     """Decide rewrite vs patch using avoid-ai-writing's threshold."""
     tier1_count = sum(1 for h in all_hits if h.get('tier') == 1)
     cat_set = set(h.get('category', '') for h in all_hits)
@@ -490,6 +503,18 @@ def decide_action(score_obj: Dict, all_hits: List[Dict]) -> Dict:
     if drift >= 3:
         return {'action': 'rewrite',
                 'reason': f'术语漂移 {drift} 处，必须整体重写'}
+
+    # Skeletal gated rule (§1–5 only; §6 sub-steps are legitimately parallel).
+    # Count only scoring-eligible skeletal flags (non_scoring=True is §6 gated).
+    if enable_skeletal and section != '六':
+        skel = [h for h in all_hits
+                if h.get('category') == 'skeletal'
+                and not h.get('non_scoring')]
+        max_items = max((h.get('item_count', 0) for h in skel), default=0)
+        if len(skel) >= 2 or max_items >= 4:
+            return {'action': 'rewrite',
+                    'reason': f'Skeletal 兄弟骨架/论证槽位穷尽 '
+                              f'(flags={len(skel)}, max_items={max_items})'}
 
     if tier1_count >= 5 and len(cat_set) >= 3:
         return {'action': 'rewrite',
@@ -517,11 +542,50 @@ def main():
                         help='JSON file with term lock dictionary')
     parser.add_argument('--output', default=None,
                         help='Output JSON path (defaults to stdout)')
+    parser.add_argument('--enable-skeleton', action='store_true',
+                        help='Enable Skeletal category (skeleton_sim + '
+                             'argumentation_slots). Opt-in v1.3; OFF '
+                             'preserves v1.2 byte-identical output.')
+    parser.add_argument('--enable-sentential', action='store_true',
+                        help='v1.4: enable Sentential category '
+                             '(long_sentence + structural_density + '
+                             'heading_length). Weight 3.')
+    parser.add_argument('--enable-rhetorical', action='store_true',
+                        help='v1.4: enable Rhetorical category '
+                             '(triple_pattern + patent_boilerplate + '
+                             'redundancy). Weight 6.')
+    parser.add_argument('--enable-v15', action='store_true',
+                        help='v1.5 opt-in: enable 7 new detectors '
+                             '(topic_switch, enumeration_check, background_leak, '
+                             'term_pronoun, unprepared_concept, param_segment, '
+                             'merge_short). Flags map to critical/high/rhetorical/'
+                             'style categories per rule.')
+    parser.add_argument('--enable-all', action='store_true',
+                        help='v1.4 shorthand: turn on skeleton + sentential '
+                             '+ rhetorical + v1.5 detectors together.')
+    parser.add_argument('--enable-reader', action='store_true',
+                        help='Include reader_pass validated flags if '
+                             '--reader-validated JSON exists')
+    parser.add_argument('--reader-validated', default=None,
+                        help='Path to reader_pass --mode validate output JSON')
     args = parser.parse_args()
 
     # Force UTF-8 on Windows
     if sys.platform == 'win32':
         sys.stdout.reconfigure(encoding='utf-8')
+
+    # --enable-all expands to all opt-in subsystems (v1.3 + v1.4 + v1.5)
+    if args.enable_all:
+        args.enable_skeleton = True
+        args.enable_sentential = True
+        args.enable_rhetorical = True
+        args.enable_v15 = True
+
+    # v1.5 rhetorical-category flags (topic_switch, unprepared_concept) rely on
+    # rhetorical weight being loaded. Auto-enable rhetorical scoring so the
+    # flags are not silently dropped.
+    if args.enable_v15:
+        args.enable_rhetorical = True
 
     text = Path(args.input).read_text(encoding='utf-8')
     paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
@@ -549,12 +613,191 @@ def main():
     all_hits.extend(detect_patent_specific(text, paragraphs, args.section))
     all_hits.extend(detect_term_drift(text, term_lock))
 
-    score_obj = compute_score(all_hits)
-    action = decide_action(score_obj, all_hits)
+    # Opt-in Skeletal detectors (v1.3). Default OFF preserves v1.2
+    # byte-identical output.
+    if args.enable_skeleton:
+        # Import sibling detector modules from the same directory.
+        import os
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        import skeleton_sim
+        import argumentation_slots
+        skel_res = skeleton_sim.analyze(text, section=args.section)
+        slot_res = argumentation_slots.analyze(text, section=args.section)
+        for f in skel_res.get('flags', []):
+            f.setdefault('category', 'skeletal')
+            f.setdefault('weight', 10)
+            f.setdefault('source', 'skeleton_sim')
+            all_hits.append(f)
+        for f in slot_res.get('flags', []):
+            f.setdefault('category', 'skeletal')
+            f.setdefault('weight', 10)
+            f.setdefault('source', 'argumentation_slots')
+            all_hits.append(f)
 
-    # Group issues by category for report
+    # ── v1.4: Sentential detectors (H1/H16/H17 + H3/H4 + H18) ──
+    if args.enable_sentential:
+        import os
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        import long_sentence
+        import structural_density
+        import heading_length
+
+        # Gather term-lock tokens for noun-chunk false-positive suppression
+        term_tokens = list(term_lock.keys()) if term_lock else []
+
+        ls = long_sentence.detect(text, section=args.section)
+        for f in (ls['flags_sentence'] + ls['flags_paragraph'] +
+                  ls['flags_semicolon']):
+            f.setdefault('category', 'sentential')
+            wf = f.get('weight_factor', 1)
+            f['weight'] = round(3 * wf, 1)
+            f.setdefault('source', 'long_sentence')
+            all_hits.append(f)
+
+        sd = structural_density.detect(text, section=args.section,
+                                       term_lock=term_tokens)
+        for f in (sd['flags_long_premodifier'] +
+                  sd['flags_compound_noun_chunk']):
+            f.setdefault('category', 'sentential')
+            f['weight'] = 3 * f.get('weight_factor', 1)
+            f.setdefault('source', 'structural_density')
+            all_hits.append(f)
+
+        hl = heading_length.detect(text, section=args.section)
+        for f in hl['flags']:
+            f.setdefault('category', 'sentential')
+            wf = f.get('weight_factor', 1)
+            f['weight'] = 6 * wf  # H18 is weight=6 (double base) per plan
+            f.setdefault('source', 'heading_length')
+            all_hits.append(f)
+
+    # ── v1.4: Rhetorical detectors (H5 + H6/H7/H8/H12 + H10) ──
+    if args.enable_rhetorical:
+        import os
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        import triple_pattern
+        import patent_boilerplate
+        import redundancy
+
+        term_tokens = list(term_lock.keys()) if term_lock else []
+
+        tp = triple_pattern.detect(text, section=args.section)
+        for f in tp['flags_cross_paragraph'] + tp['flags_hint_dense']:
+            f.setdefault('category', 'rhetorical')
+            f['weight'] = 6 * f.get('weight_factor', 1)
+            f.setdefault('source', 'triple_pattern')
+            all_hits.append(f)
+
+        pb = patent_boilerplate.detect(text, section=args.section,
+                                       term_lock=term_tokens)
+        for f in (pb['flags_boilerplate'] + pb['flags_quote_coinage'] +
+                  pb['flags_passive_written'] + pb['flags_end_summary']):
+            f.setdefault('category', 'rhetorical')
+            f.setdefault('weight', 6)
+            f.setdefault('source', 'patent_boilerplate')
+            all_hits.append(f)
+
+        rd = redundancy.detect(text, section=args.section,
+                               term_lock=term_tokens)
+        for f in rd['flags_pairs'] + rd['flags_hubs']:
+            f.setdefault('category', 'rhetorical')
+            f['weight'] = 6 * f.get('weight_factor', 1)
+            f.setdefault('source', 'redundancy')
+            all_hits.append(f)
+
+    # ── v1.5: 7 new detectors (R1-R14 coverage gaps + over-correction guard) ──
+    if args.enable_v15:
+        import os
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        import topic_switch
+        import enumeration_check
+        import background_leak
+        import term_pronoun
+        import unprepared_concept
+        import param_segment
+        import merge_short
+
+        term_tokens = list(term_lock.keys()) if term_lock else []
+
+        ts = topic_switch.detect(text, section=args.section)
+        for f in ts.get('flags_topic_switch', []) + ts.get('flags_long_switch', []):
+            f.setdefault('source', 'topic_switch')
+            all_hits.append(f)
+
+        ec = enumeration_check.detect(text, section=args.section)
+        for f in ec.get('flags_enumeration', []):
+            f.setdefault('source', 'enumeration_check')
+            all_hits.append(f)
+
+        bl = background_leak.detect(text, section=args.section)
+        for f in bl.get('flags_background_leak', []):
+            f.setdefault('source', 'background_leak')
+            all_hits.append(f)
+
+        tp2 = term_pronoun.detect(text, section=args.section,
+                                  term_lock=term_tokens if term_tokens else None)
+        for f in tp2.get('flags_term_repeat', []):
+            f.setdefault('source', 'term_pronoun')
+            all_hits.append(f)
+
+        uc = unprepared_concept.detect(text, section=args.section)
+        for f in uc.get('flags_unprepared', []) + uc.get('flags_step_ref', []):
+            f.setdefault('source', 'unprepared_concept')
+            all_hits.append(f)
+
+        ps = param_segment.detect(text, section=args.section)
+        for f in ps.get('flags_param_mixed', []) + ps.get('flags_bracket_leak', []):
+            f.setdefault('source', 'param_segment')
+            all_hits.append(f)
+
+        ms = merge_short.detect(text, section=args.section)
+        for f in ms.get('flags_merge_pair', []) + ms.get('flags_over_segmented', []):
+            f.setdefault('source', 'merge_short')
+            all_hits.append(f)
+
+    # Reader-pass validated flags (veto power when --reader-validated given).
+    # Guarded behind --enable-skeleton: reader flags use skeletal category
+    # and the 'skeletal' breakdown key / issues group only exist when the
+    # Skeletal subsystem is enabled. Without this guard, reader flags would
+    # contribute to all_hits but silently vanish from both score and report.
+    if args.reader_validated and args.enable_skeleton:
+        reader_data = json.loads(
+            Path(args.reader_validated).read_text(encoding='utf-8'))
+        for f in reader_data.get('flags', []):
+            f.setdefault('category', 'skeletal')
+            f.setdefault('weight', 10)
+            f.setdefault('source', 'reader_pass')
+            all_hits.append(f)
+    elif args.reader_validated and not args.enable_skeleton:
+        sys.stderr.write(
+            'WARN: --reader-validated requires --enable-skeleton; '
+            'reader flags ignored.\n')
+
+    score_obj = compute_score(all_hits, enable_skeletal=args.enable_skeleton,
+                              enable_sentential=args.enable_sentential,
+                              enable_rhetorical=args.enable_rhetorical)
+    action = decide_action(score_obj, all_hits,
+                           enable_skeletal=args.enable_skeleton,
+                           section=args.section)
+
+    # Group issues by category for report. `skeletal` key appears only
+    # when --enable-skeleton is on, to preserve v1.2 JSON shape.
     grouped = {'critical': [], 'high': [], 'medium': [], 'style': [],
                'patent': [], 'tier1': [], 'tier2': [], 'tier3': []}
+    if args.enable_skeleton:
+        grouped['skeletal'] = []
+    if args.enable_sentential:
+        grouped['sentential'] = []
+    if args.enable_rhetorical:
+        grouped['rhetorical'] = []
     for h in all_hits:
         cat = h.get('category', '')
         tier = h.get('tier')

@@ -80,6 +80,26 @@
 
 由 `scripts/burstiness.py` 自动计算。
 
+### Skeletal (权重 10, 可选)
+
+最高权重类别，专捕骨架级/论证槽位级的 AI 痕迹。此类问题无法通过词级
+修补解决，必须整体重写兄弟条目骨架。
+
+- 类型 1 **兄弟骨架高度平行** (skeleton_sim.py): 3+ 条兄弟列表项共享
+  `[locative, negation/modal, colon, main_verb_pos]` 签名
+- 类型 2 **论证槽位穷尽** (argumentation_slots.py): 3+ 条兄弟项各承载
+  ≥2 个论证槽位 (机制/数据/对比/caveat/motivation)
+- 类型 3 **读者视角骨架 flag** (reader_pass validated): humanizer-reader
+  agent 识别的骨架模板，经 post-hoc regex 校验通过
+
+section gating:
+- §1~5 节: 触发 rewrite 决策当 (2+ skeletal flags) OR (任一 flag item_count ≥ 4)
+- §6 具体实施方式: 所有 skeletal flag 标 non_scoring=True 不计分
+  (numbered substeps 天然平行，不是 AI 痕迹)
+
+opt-in: 添加 Skeletal 类需 audit.py --enable-skeleton 参数。不启用时
+与 v1.2 完全向后兼容 (JSON schema 不变)。
+
 ### 专利专属 (Patent-only)，权重 = 6
 
 通用 humanizer 不会检测的项，但在专利中是严重问题：
@@ -92,6 +112,78 @@
 | 公式编号不连续 | 提取 `（\d+）` 检查序列 |
 | 图引用不连续 | 提取 `图\s*\d+` 检查序列 |
 | 步骤标题用动宾短语 | 步骤标题以动词开头（"采集"/"获取"等）而非名词短语 |
+
+### Sentential (v1.4, 权重 = 3，opt-in --enable-sentential)
+
+句法级 AI 痕迹，独立于词级和结构级。报告§4-§7 证据基础。
+
+| 模式 | 检测方法 | 阈值 |
+|---|---|---|
+| 单句超长 | 切分句号/问号/叹号，计字数 | >80 字 flag；>120 字 权重×2 |
+| 段内分号过密 | 计单段分号数 | ≥3 次 flag；≥5 次 权重×2 |
+| "的"前堆叠长定语 | 正则 `[^。；，,]{15,}的[\u4e00-\u9fa5]{2,6}`，排除术语锁定表 | 段内 ≥2 处 flag |
+| 复合长名词短语 | jieba POS，≥4 连续 NN/NR 无虚词（排除术语锁定表） | 全文 ≥3 处 flag |
+| 超长段 | 段字数 | >200 字 flag；>300 字 权重×2；>200 字且分号 ≥4 权重×3 |
+| 编号分点总起句过长 (v1.4 H18) | 正则 `^[（(]\d+[)）]\s*([^。；\n]+)` 抓总起句，计字数 | ≥10 字 flag；≥15 字 权重×2 |
+
+**Why 独立一维**：这些模式与 Tier 1-3 词级正交，也与 skeleton_sim 正交。报告§4-§7 指出它们才是中文 AI 味最稳定的指纹——即使完全替换掉词汇，句子长度和分号密度仍会暴露 AI 痕迹。
+
+**§6 豁免**：单句超长 / 段内分号过密在六节豁免一半权重（因技术描述天然复杂），但超长段 和 编号分点总起句过长 **不豁免**（H15 §6 收紧）。
+
+### Rhetorical (v1.4, 权重 = 6，opt-in --enable-rhetorical)
+
+篇章级 AI 痕迹。报告§3/§14/§15/§17 证据基础。
+
+| 模式 | 检测方法 | 阈值 |
+|---|---|---|
+| 跨段语义复述 | TF-IDF 或 bigram-Jaccard 相似度 | 非相邻段对 sim ≥0.6 flag；≥3 段互相 sim ≥0.6 权重×2 |
+| 三元并列跨段重现 | 抽取 `A、B、C`（A/B/C 各 2-6 字）短语，跨段复用 | 同一三元短语出现在 ≥3 段 flag；≥5 段 权重×2 |
+| 强调副词密度 | Tier 1.7 词表，全文 | ≥5 次 flag；≥10 次 权重×2 |
+| 末段总结陈词 | 末段首词 ∈ {由此, 通过, 综上, 因此} 且含 "本(发明\|方法)" + {能力\|要求\|支撑\|实现} | 命中 1 段 flag |
+| 数据精度过度精确化 | 正则 `约[\u4e00-\u9fa5\d]{1,4}(?:成\|%\|个百分点)` 或 `\d+%(?:\s*[-~至到]\s*\d+%)?` | 全文 ≥3 次 flag；≥5 次 权重×2 |
+| 发明八股句 | Tier 1.6 词表 | 每命中一处 flag（不做阈值） |
+
+**Why 高权重**：篇章级问题一旦出现即打破"像代理人手写"的判定基线。单次命中的信号强度远高于词级偶发。
+
+### v1.4 评分示例
+
+```
+critical (8) × 2 = 16
+high (4) × 5 = 20
+medium (2) × 3 = 6
+style (1.5) × 2 = 3
+patent (6) × 1 = 6
+skeletal (10) × 1 = 10  [opt-in --enable-skeleton]
+sentential (3) × 4 = 12  [opt-in --enable-sentential]
+rhetorical (6) × 3 = 18  [opt-in --enable-rhetorical]
+─────────
+total = 91 → very high
+```
+
+v1.4 默认关闭 sentential / rhetorical 以保持 v1.3 向后兼容。Reviewer rubric 和 Phase 3 humanizer 闸门建议全开启。
+
+### v1.5 新增检测器（opt-in via --enable-v15）
+
+7 个新检测器分摊到现有权重类别（不新增大类）：
+
+| 检测器 | 类别 | 权重 | 报告规则 |
+|---|---|---|---|
+| enumeration_check (missing_numbering) | critical | 8 | R3 §4a/§4c 无 `（1）（2）（3）` 编号 |
+| enumeration_check (non_action_verb_start) | high | 4 | R3 子项首句非效果动词开头 |
+| background_leak (background_leak) | critical | 8 | R6 §4b 步骤含背景问题词 |
+| background_leak (double_problem_solution_lead) | critical | 12 (×1.5) | R6 「X缺乏Y。为解决...」双句结构 |
+| background_leak (step_too_long) | high | 4 | R6 §4b 单步骤 >150 字 |
+| param_segment (param_mixed_with_action) | critical | 8 | R13 `其中，` 段含操作动词 |
+| param_segment (bracket_op_leak) | critical | 8 | R13 括号内塞操作流程 |
+| topic_switch (topic_switch_multi) | rhetorical | 6 | R2 段内 ≥2 个话题切换标志 |
+| topic_switch (long_segment_with_switch) | rhetorical | 9 (×1.5) | R2 长段 + 标志词 |
+| unprepared_concept (unprepared_concept) | rhetorical | 6 | R10 概念未铺垫 |
+| unprepared_concept (stepwise_ref_bridge) | high | 4 | R10 机械步骤引用衔接 |
+| term_pronoun (term_repeat_no_pronoun) | high | 4 | R8 段内长术语未代词化 |
+| merge_short (mergable_short_pair) | style | 1.5 | 过度修复保护 |
+| merge_short (over_segmented_paragraph) | style | 1.5 | 过度修复保护 |
+
+**enable-v15 自动开启 rhetorical**：因 topic_switch 与 unprepared_concept flag 使用 rhetorical category，`--enable-v15` 会自动设置 `args.enable_rhetorical = True`，确保权重加载。
 
 ---
 

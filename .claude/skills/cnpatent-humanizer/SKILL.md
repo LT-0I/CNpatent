@@ -24,6 +24,19 @@ description: >
 > 中文专利专用的 humanizer，针对专利文体的"形式严格、术语锁死、句式固定"
 > 的特殊性做适配。
 
+> **版本说明**
+> - **v1.5 (opt-in via --enable-v15)**: adds 7 new detectors covering v2
+>   AI 味 report rules 2/3/5/6/8/10/13/14 + over-correction guard
+>   (topic_switch, enumeration_check, background_leak, term_pronoun,
+>   unprepared_concept, param_segment, merge_short). When `--enable-v15` is
+>   passed, rhetorical category is auto-enabled so rhetorical-weight flags
+>   (topic_switch, unprepared_concept) are scored. Also extends `regex_clean.py`
+>   with regex patches for R1/R5/R9/R10/R12/R14.
+> - **v1.3 (opt-in via --enable-skeleton)**: adds Skeletal detection
+>   category — skeleton_sim + argumentation_slots + reader_pass.
+> - **v1.2 and below**: default behavior unchanged; `audit.py` without
+>   `--enable-skeleton` produces byte-identical output.
+
 ---
 
 ## 核心原则
@@ -54,9 +67,9 @@ description: >
 
 ---
 
-## 核心架构：四维 × 五阶段
+## 核心架构：四维 × 六阶段
 
-去 AI 味问题被拆解成**四个互相正交的维度**（词级 / 句式 / 篇章 / 章节规则）和**五个执行阶段**。每个阶段专注一类问题，避免单遍处理时不同维度互相干扰。
+去 AI 味问题被拆解成**四个互相正交的维度**（词级 / 句式 / 篇章 / 章节规则）和**六个执行阶段**。每个阶段专注一类问题，避免单遍处理时不同维度互相干扰。
 
 ### 四个维度的参考文档
 - [three-tier-vocabulary.md](references/three-tier-vocabulary.md) — 3 级词汇模型
@@ -66,13 +79,22 @@ description: >
 - [protected-regions.md](references/protected-regions.md) — 保护区域识别
 - [section-rules.md](references/section-rules.md) — 各节差异化规则
 - [patent-anti-patterns.md](references/patent-anti-patterns.md) — 专利专属反模式
+- [skeleton-patterns.md](references/skeleton-patterns.md) — 骨架级 AI 模板目录 (v1.3)
+- [reader-pass-prompts.md](references/reader-pass-prompts.md) — reader_pass 分节 prompt 变体 (v1.3)
 
-### 五阶段
+### 六阶段
 
 ```
-Phase 0 ── Phase 1 ── Phase 2 ── Phase 3 ── Phase 4
-(Protect)  (Detect)   (Score)    (Rewrite)  (Verify)
+Phase 0 ── Phase 1 ── Phase 2 ── Phase 3 ── Phase 4 ── Phase 4.5 ── Phase 5
+(Protect)  (Detect)   (Score)    (Rewrite)  (DetVerify) (Reader)    (Gate)
 ```
+
+Phase 4.5 (Reader Review, v1.3 opt-in)：**独立 agent**
+`humanizer-reader` 对改写后文本做骨架级 review。输入**仅**包含改写后
+文本 + 章节标签，**零接触** audit 分数 / Tier 命中 / term-lock / diff。
+reader agent 产出骨架 flag + 引用；`reader_pass.py --mode validate`
+做 post-hoc 正则校验 (substring 必须逐字出现)；存活 flag 有 **veto**
+权可触发 Phase 3 二次重写。每文档最多 **2 轮** reader-pass，防止死循环。
 
 下面逐阶段说明。
 
@@ -128,7 +150,17 @@ Phase 0 ── Phase 1 ── Phase 2 ── Phase 3 ── Phase 4
 - 整齐因果链（每段都"因此/由此"）
 - 偶数步骤（步骤数为 4/6/8）
 
-详见 [patent-anti-patterns.md](references/patent-anti-patterns.md)。
+**骨架级检测 (v1.3 opt-in, --enable-skeleton)**:
+- `skeleton_sim.py` — 兄弟列表项 POS + 表面标记签名，3+ 同签名即 flag
+  (§6 numbered substeps 不计分)
+- `argumentation_slots.py` — 每条兄弟条目承载的论证槽位 (机制/数据/
+  对比/caveat/motivation)，3+ 条各填 ≥2 槽即 flag
+- `reader_pass.py` — 独立 `humanizer-reader` agent 的骨架 review，
+  post-hoc regex 校验引用子串必须逐字出现
+
+详见 [patent-anti-patterns.md](references/patent-anti-patterns.md)、
+[skeleton-patterns.md](references/skeleton-patterns.md)、
+[reader-pass-prompts.md](references/reader-pass-prompts.md)。
 
 ### 1C. 篇章检测（Discoursal Rhythm）
 
@@ -277,6 +309,65 @@ PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/burstiness
 
 输出每个滑动窗口的标准差/均值比，低于 0.15 的窗口告警。
 
+### scripts/skeleton_sim.py (v1.3)
+兄弟列表项骨架签名检测。POS + 表面标记 (locative / negation-modal /
+colon / main-verb POS)；3+ 同签名兄弟条目触发 Skeletal flag。
+`--section 六` 下标 `non_scoring=True`。
+
+```bash
+PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/skeleton_sim.py \
+  --input 4c_effect.md --section 四 --output skeleton_flags.json
+```
+
+### scripts/argumentation_slots.py (v1.3)
+论证槽位穷尽检测。纯 regex；3+ 兄弟条目各承载 ≥2 论证槽
+(mechanism/data/contrast/caveat/motivation) 触发 Skeletal flag。
+`--section 六` 下标 `non_scoring=True`。
+
+```bash
+PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/argumentation_slots.py \
+  --input 4c_effect.md --section 四 --output slot_flags.json
+```
+
+### v1.5 检测器 (opt-in via --enable-v15)
+
+对应 v2 AI 味分析报告的 16 条规则中在 v1.4 未覆盖的部分：
+
+| 脚本 | 规则 | 类别/权重 | 用途 |
+|---|---|---|---|
+| `topic_switch.py` | R2 | rhetorical (6) | 段内 ≥2 个「X 方面/X 上/X 层面」标志词强制断段；长段(>250字)含≥1 标志词 weight×1.5 |
+| `enumeration_check.py` | R3 | critical (8) / high (4) | §4a/§4c 无 `（1）（2）（3）` 编号；编号后非效果动词开头 |
+| `background_leak.py` | R6 | critical (8) | §4b 步骤正文含「缺乏/不足/失效/稀疏/延迟/含噪」等背景问题词；单步骤 >150 字 |
+| `term_pronoun.py` | R8 | high (4) | 段内长术语（≥6 字）重复 ≥2 次未用「该/上述/前述」代词 |
+| `unprepared_concept.py` | R10 | rhetorical (6) / high (4) | 「X 缺乏 Y。为解决...」X 在前 3 段未铺垫；机械式步骤引用衔接 |
+| `param_segment.py` | R13 | critical (8) | 「其中，」参数段混入操作动词；括号内塞操作描述（>15 字含动词）|
+| `merge_short.py` | 过度修复 | style (1.5) | 承接型连续短句应合并；段内 ≥3 连续 <20 字短句 flag |
+
+### scripts/reader_pass.py (v1.3)
+Phase 4.5 reader-view 编排：生成 prompt + post-hoc 校验引用子串。
+**不调用 LLM SDK** — 只构造 prompt 文本并做结构化 JSON 校验。配合
+项目级 agent `.claude/agents/humanizer-reader.md`。
+
+```bash
+# 1. 生成 reader prompt
+PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/reader_pass.py \
+  --mode prompt --input 4c_effect.md --section 四 \
+  --prompt-out reader_prompt.txt
+
+# 2. (orchestrator) 把 reader_prompt.txt 发给 humanizer-reader agent，
+#    把响应存为 reader_response.json
+
+# 3. 校验引用子串 (fabricated citation 会被 drop)
+PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/reader_pass.py \
+  --mode validate --input reader_response.json --text 4c_effect.md \
+  --output validated.json
+
+# 4. 把 validated flag 并入 audit (opt-in Skeletal)
+PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/audit.py \
+  --input 4c_effect.md --section 四 \
+  --enable-skeleton --reader-validated validated.json
+```
+
 **重要**：脚本只做确定性替换和检测，**不做语义级重写**。语义级重写必须
 由 LLM 完成。脚本是 LLM 重写之前的预处理和事后的校验工具。
 
@@ -293,6 +384,8 @@ PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/burstiness
 | [protected-regions.md](references/protected-regions.md) | 受保护区域识别 |
 | [section-rules.md](references/section-rules.md) | 各节差异化规则 |
 | [patent-anti-patterns.md](references/patent-anti-patterns.md) | 专利专属反模式 |
+| [skeleton-patterns.md](references/skeleton-patterns.md) | 骨架级 AI 模板目录 (v1.3) |
+| [reader-pass-prompts.md](references/reader-pass-prompts.md) | reader_pass 分节 prompt 变体 (v1.3) |
 | [../cnpatent/references/writing-rules.md](../cnpatent/references/writing-rules.md) | cnpatent 主词表（共享） |
 
 ---
