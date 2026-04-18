@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rtk git:*)",
+      "mcp__Claude_in_Chrome__browser_batch",
+      "Bash(claude mcp *)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/audit.py --input outputs/tunnel_pavement_3d_localization/sections/4a_purpose.md --section 四 --enable-v15 --output /tmp/audit_4a.json)",
+      "Bash(python -c ' *)",
+      "Bash(PYTHONUTF8=1 python -X utf8 .claude/skills/cnpatent-humanizer/scripts/audit.py --help)"
+    ]
+  }
+}
