@@ -9,6 +9,9 @@
 # Allow README
 !README.md
 
+# Allow project-scope CLAUDE.md (Claude Code instructions, shared tooling like rtk)
+!CLAUDE.md
+
 # Allow this gitignore itself
 !.gitignore
 
